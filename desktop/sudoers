@@ -1,4 +1,0 @@
-# kvm.sh install-desktop fills @USER@ / @PODMAN@ / @CONTAINER@ and installs this as /etc/sudoers.d/kvm-container.
-# Processes launched from the Activities overview (.desktop -> kvm.sh launch) have no terminal to enter a password,
-# so allow only the fixed commands that start GUI apps in the container without a password (exact match incl. arguments, no wildcards)
-@USER@ ALL=(root) NOPASSWD: @PODMAN@ exec @CONTAINER@ gui firefox, @PODMAN@ exec @CONTAINER@ gui virt-manager
