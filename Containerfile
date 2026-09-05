@@ -59,17 +59,17 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && (dnf -y install --setopt=install_weak_deps=False virt-manager || echo "virt-manager is not available, skipping") \
     && dnf clean all && rm -rf /var/cache/dnf /var/cache/libdnf5
 
-# regular user for GUI apps and cockpit login (uid=1000 matches the owner of the WSLg runtime-dir)
+# template user for GUI apps and cockpit login. At boot gui-user.service renames it to the host user and applies the
+# host user's uid/gid and password hash (see container/gui-user-setup), so no password is set here
 ARG USER=admin
-ARG PASSWORD=admin
 RUN useradd -m -u 1000 ${USER} \
     && usermod -aG wheel ${USER} \
     && usermod -aG libvirt ${USER} \
     && usermod -aG video ${USER} \
     && usermod -aG render ${USER} \
-    && echo "${USER}:${PASSWORD}" | chpasswd \
-    && echo "${USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USER} \
-    && chmod 0440 /etc/sudoers.d/${USER}
+    # passwordless sudo for wheel (cockpit's administrative access); by group so it survives the rename
+    && echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-nopasswd \
+    && chmod 0440 /etc/sudoers.d/wheel-nopasswd
 
 # tune libvirt/qemu for running inside a container
 RUN sed -i \

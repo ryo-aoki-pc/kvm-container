@@ -2,7 +2,7 @@
 # Helper script for the qemu-kvm/libvirt/cockpit/firefox container (AlmaLinux 10)
 # Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (cockpit only)
 #   ./kvm.sh build            build the image
-#   ./kvm.sh up               start the container (systemd inside; cockpit at https://localhost:9090)
+#   ./kvm.sh up               start the container (systemd inside; cockpit at https://localhost:9090, log in with your host user)
 #   ./kvm.sh down             stop and remove the container (VM data stays in data/ under the repository)
 #   ./kvm.sh firefox          open cockpit in the container's firefox on the host display
 #   ./kvm.sh virt-manager     show virt-manager on the host display
@@ -18,7 +18,6 @@
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
 #   KVM_SOFTWARE_GL=1       force software rendering
-#   HOST_UID / HOST_GID     uid/gid of the GUI user (admin) inside the container (default: the invoking user)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -28,8 +27,9 @@ PODMAN="sudo podman"
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9090}
-HOST_UID=${HOST_UID:-$(id -u)}
-HOST_GID=${HOST_GID:-$(id -g)}
+HOST_USER=$(id -un)                    # the container's GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
+HOST_UID=$(id -u)
+HOST_GID=$(id -g)
 KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libvirt / home), inside the repository
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-manager firefox"    # apps that get a .desktop entry (subcommand names of container/gui)
@@ -57,6 +57,27 @@ ensure_kvm() {
   sudo chmod 666 /dev/kvm
 }
 
+# build the podman arguments (HOST_ARGS) that describe the invoking host user: name, uid/gid and password hash.
+# gui-user.service in the container renames the template user to this name and applies them, so cockpit accepts the
+# host user's password. The hash is passed through an env file (never on the command line); ENV_FILE is removed on exit
+HOST_ARGS=()
+ENV_FILE=
+host_user_args() {
+  local hash
+  [ "$HOST_UID" != 0 ] || { echo "!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)" >&2; exit 1; }
+  HOST_ARGS+=(-e "HOST_USER=$HOST_USER" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
+  hash=$(sudo getent shadow "$HOST_USER" | cut -d: -f2)
+  case "$hash" in
+    ""|"!"*|"*"*)
+      echo "!! $HOST_USER has no usable password on the host; cockpit login will not work until one is set (passwd), then ./kvm.sh down && ./kvm.sh up" >&2 ;;
+    *)
+      ENV_FILE=$(mktemp)
+      trap 'rm -f "$ENV_FILE"' EXIT
+      printf 'HOST_PASSWORD_HASH=%s\n' "$hash" >"$ENV_FILE"
+      HOST_ARGS+=(--env-file "$ENV_FILE") ;;
+  esac
+}
+
 # build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio) into the container
 GUI_ARGS=()
 gui_args() {
@@ -71,7 +92,7 @@ gui_args() {
     echo "!! XDG_RUNTIME_DIR ($rt) does not exist. Run this from a terminal inside a desktop session" >&2
     exit 1
   fi
-  GUI_ARGS+=(-v "$rt:$rt" -e "XDG_RUNTIME_DIR=$rt" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
+  GUI_ARGS+=(-v "$rt:$rt" -e "XDG_RUNTIME_DIR=$rt")
   [ -n "${WAYLAND_DISPLAY:-}" ] && GUI_ARGS+=(-e "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
   if [ -n "${DISPLAY:-}" ]; then
     x11=$(readlink -f /tmp/.X11-unix 2>/dev/null || true)
@@ -143,6 +164,7 @@ case "$cmd" in
   up)
     prepare_all
     if running; then echo ">> $CONTAINER is already running"; exit 0; fi
+    host_user_args
     gui_args
     $PODMAN rm -f "$CONTAINER" >/dev/null 2>&1 || true
     $PODMAN run -d --name "$CONTAINER" --hostname "$CONTAINER" \
@@ -151,7 +173,8 @@ case "$cmd" in
       -p "$COCKPIT_BIND:$COCKPIT_PORT:9090" \
       -v "$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt" \
       -v "$KVM_DATA_DIR/etc-libvirt:/etc/libvirt" \
-      -v "$KVM_DATA_DIR/home:/home/admin" \
+      -v "$KVM_DATA_DIR/home:/home/$HOST_USER" \
+      "${HOST_ARGS[@]}" \
       ${GUI_ARGS[@]+"${GUI_ARGS[@]}"} \
       -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
       "$IMAGE" >/dev/null
@@ -159,10 +182,10 @@ case "$cmd" in
     for i in $(seq 1 30); do
       if $PODMAN exec "$CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1'; then
         if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
-          echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (user: admin / pass: admin)"
+          echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
           echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reload"
         else
-          echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (user: admin / pass: admin)"
+          echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
         fi
         [ ${#GUI_ARGS[@]} -gt 0 ] && echo ">> host display: ./kvm.sh firefox | ./kvm.sh virt-manager"
         exit 0
@@ -234,5 +257,5 @@ case "$cmd" in
     for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
     echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/{virt-manager,firefox}.*"
     ;;
-  *)      sed -n '2,21p' "$0" ;;
+  *)      sed -n '2,20p' "$0" ;;
 esac

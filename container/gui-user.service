@@ -1,5 +1,5 @@
 [Unit]
-Description=Align the GUI user's uid/gid with the host desktop user
+Description=Mirror the host user (name, uid/gid, password) into the container's GUI/cockpit user
 DefaultDependencies=no
 After=local-fs.target
 Before=cockpit.socket virtqemud.socket

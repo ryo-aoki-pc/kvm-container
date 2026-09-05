@@ -1,14 +1,16 @@
 #!/bin/bash
-# start a GUI app inside the container as the admin user on the host display (Wayland/X11)
+# start a GUI app inside the container as the GUI user (the host user mirrored by gui-user.service) on the host display (Wayland/X11)
 #   gui firefox            -> opens cockpit
 #   gui virt-manager
 #   gui virt-viewer <vm>
 # DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts
 set -e
+# the GUI user's name is HOST_USER from PID 1's environment (set by kvm.sh); "admin" is the template user's name
+GUI_USER=${GUI_USER:-$(tr '\0' '\n' </proc/1/environ | sed -n 's/^HOST_USER=//p')}
 GUI_USER=${GUI_USER:-admin}
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   echo "!! GUI unavailable: the container was started without a display (headless)." >&2
-  echo "   Use cockpit in a browser instead: https://<host>:9090 (user admin)" >&2
+  echo "   Use cockpit in a browser instead: https://<host>:9090 (log in with your host user)" >&2
   exit 2
 fi
 export MOZ_ENABLE_WAYLAND=${MOZ_ENABLE_WAYLAND:-1}

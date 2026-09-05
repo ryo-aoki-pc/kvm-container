@@ -43,7 +43,7 @@ COCKPIT_BIND=0.0.0.0 ./kvm.sh up
 sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reload
 ```
 
-別 PC のブラウザで `https://<ホスト名>:9090` を開き、admin / admin でログインします。
+別 PC のブラウザで `https://<ホスト名>:9090` を開き、`kvm.sh up` を実行したホストユーザーの名前とパスワードでログインします。
 「仮想マシン」ページ (cockpit-machines) で VM の作成とコンソール表示ができます。
 
 ## 使い方
@@ -51,7 +51,7 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ```bash
 ./kvm.sh build          # イメージをビルド (localhost/qemu-kvm-cockpit:latest)
 ./kvm.sh up             # コンテナ起動 (kvm モジュールのロードと /dev/kvm の権限調整も行う)
-./kvm.sh firefox        # コンテナ内 firefox で cockpit をホスト画面に表示 (admin / admin)
+./kvm.sh firefox        # コンテナ内 firefox で cockpit をホスト画面に表示 (ホストのユーザー名・パスワードでログイン)
 ./kvm.sh virt-manager   # virt-manager をホスト画面に表示
 ./kvm.sh viewer <VM名>  # 任意の VM を virt-viewer で表示
 ./kvm.sh virsh list     # virsh
@@ -63,6 +63,7 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ```
 
 cockpit はホストのブラウザからも `https://localhost:9090` で開けます (自己署名証明書)。
+ログインは `kvm.sh up` を実行したホストユーザーの名前とパスワードです (コンテナ内のユーザーをホストユーザーに合わせています。後述)。
 
 環境変数:
 
@@ -71,7 +72,6 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `KVM_HOST` | `auto` | `wsl` / `generic` / `headless` で判定を上書き |
 | `COCKPIT_BIND` / `COCKPIT_PORT` | `127.0.0.1` / `9090` | cockpit の公開アドレスとポート |
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
-| `HOST_UID` / `HOST_GID` | 実行ユーザー | コンテナ内 GUI ユーザー admin の uid/gid |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
 
@@ -81,8 +81,8 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | --- | --- |
 | `Containerfile` | AlmaLinux 10 ベース。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
-| `container/gui` | admin ユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック) |
-| `container/gui-user-setup` + `gui-user.service` | 起動時に admin の uid/gid をホストユーザーに合わせる |
+| `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック) |
+| `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせる |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
 | `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
@@ -96,8 +96,11 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 - `/tmp/.X11-unix` を **読み取り専用**でマウント (X11 フォールバック用)。読み取り専用にするのは、
   コンテナの systemd-tmpfiles がホストの X ソケットを削除してしまうのを防ぐためです (同じ理由で `tmpfiles.d/x11.conf` をマスク)
 - `XAUTHORITY` があれば渡す。`PULSE_SERVER` は WSLg のものを渡すか、`$XDG_RUNTIME_DIR/pulse/native` を使う
-- ホストの `/run/user/<uid>` は 0700 なので、コンテナ内の GUI ユーザー `admin` の uid/gid を
-  `gui-user.service` が起動時にホストユーザー (`HOST_UID` / `HOST_GID`) に合わせます
+- コンテナ内の GUI/cockpit ユーザーは、起動時に `gui-user.service` が `kvm.sh up` を実行したホストユーザーの
+  名前・uid/gid・パスワードハッシュに合わせます (イメージ内のテンプレートユーザー `admin` をリネーム)。
+  ホストの `/run/user/<uid>` は 0700 なので uid の一致が必要で、cockpit はコンテナ内の `/etc/shadow` で認証するため
+  パスワードハッシュもコピーします。ハッシュは `podman run --env-file` で渡します (コマンドラインには出ません)。
+  ホストでパスワードを変えたら `./kvm.sh down` → `./kvm.sh up` で反映されます
 - WSL、または `/dev/dri` が無いホストではソフトウェア描画 (`LIBGL_ALWAYS_SOFTWARE=1`) を使います
 
 ### 永続化 (ホストディレクトリのバインドマウント)
@@ -108,7 +111,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | --- | --- | --- |
 | `data/var-libvirt` | `/var/lib/libvirt` | ディスクイメージ、ISO |
 | `data/etc-libvirt` | `/etc/libvirt` | VM 定義、ネットワーク定義、qemu.conf |
-| `data/home` | `/home/admin` | firefox プロファイル等 |
+| `data/home` | `/home/<ホストユーザー名>` | firefox プロファイル等 |
 
 - ディレクトリが空のときは `kvm.sh up` がイメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動します
   (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしないため)
@@ -138,7 +141,7 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
   実行ユーザーがパスワード無しで `sudo podman` を実行できるように、sudoers を事前に設定しておいてください
 - Firefox のエントリは `./kvm.sh firefox` と同じく cockpit (`https://localhost:9090`) を開きます
 - コンテナが起動していないときは、通知で `./kvm.sh up` を案内します
-- 起動直後は、コンテナ内の `gui` が systemd の起動完了 (admin の uid 合わせ、virtqemud) を待ってからアプリを起動します
+- 起動直後は、コンテナ内の `gui` が systemd の起動完了 (ユーザーの同期、virtqemud) を待ってからアプリを起動します
 - リポジトリを移動したら `./kvm.sh install-desktop` を再実行してください (`.desktop` は絶対パスです。`TryExec` により古いパスのエントリは自動で非表示になります)
 - 起動しない場合は `./kvm.sh logs` (コンテナ内 `/var/log/gui.log`) と `journalctl --user -b` を確認してください。失敗の理由はデスクトップ通知にも出ます
 - WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映しますが、未検証です
@@ -150,6 +153,8 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 - GNOME からログアウト/再ログインすると `/run/user/<uid>` が作り直されるため、`./kvm.sh down` → `./kvm.sh up` してください。
   ホスト側の `DISPLAY` 等を変えた場合も同様です。
 - RHEL 10 系の qemu-kvm には SPICE がないため、グラフィックスは VNC を使っています。
+- ホストユーザーにパスワードが設定されていない (ロックされている) と cockpit にログインできません。`passwd` で設定してから
+  `./kvm.sh down` → `./kvm.sh up` してください (`up` 時に警告が出ます)。`kvm.sh` は root ではなく一般ユーザーで実行してください。
 - コンテナ名は `kvm` 固定です (スクリプト内の変数名は `CONTAINER`。`NAME` は WSL がホスト名に使うため避けています)。
 
 ### 物理 AlmaLinux 10 GNOME での確認手順
