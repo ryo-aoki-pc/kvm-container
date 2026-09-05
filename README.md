@@ -34,7 +34,7 @@ VM のディスクや定義はその中の `data/` に置かれます。
 - ファームウェアで SVM (AMD) / VT-x (Intel) を有効にしておく
 - SELinux は Enforcing のままで構いません (`--privileged` のためラベル分離は無効)
 - **GNOME にログインした状態のターミナルから** `kvm.sh` を実行してください。
-  `DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` をそのままコンテナに引き継ぎます
+  `DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` を元にコンテナへ表示先を渡します (仕組みは後述)
 
 ### ディスプレイの無いホスト
 
@@ -81,8 +81,8 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | --- | --- |
 | `Containerfile` | AlmaLinux 10 ベース。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
-| `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック) |
-| `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせる |
+| `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使う |
+| `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせ、linger を有効にする |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
 | `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
@@ -91,14 +91,20 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 
 `kvm.sh up` は実行ユーザーのセッション環境をそのままコンテナに持ち込みます。
 
-- `$XDG_RUNTIME_DIR` (GNOME なら `/run/user/<uid>`、WSLg なら `/mnt/wslg/runtime-dir`) を**同じパス**にマウント。
-  Wayland ソケット、GNOME の Xwayland 認証ファイル、PipeWire/Pulse のソケットがここにあります
+- `$XDG_RUNTIME_DIR` (GNOME なら `/run/user/<uid>`。WSLg では `/run/user/<uid>` の中に `/mnt/wslg/runtime-dir` へのシンボリックリンクがあります)
+  をコンテナの `/run/host-xdg-runtime` に**読み取り専用**でマウントし、Wayland ソケット・GNOME の Xwayland 認証ファイル・PipeWire/Pulse の
+  ソケットは、その中を指す**絶対パス**で `WAYLAND_DISPLAY` / `XAUTHORITY` / `PULSE_SERVER` に渡します (unix ソケットへの接続は読み取り専用でも可)。
+  シンボリックリンクの先が runtime dir の外にある場合 (WSLg の `/mnt/wslg/...`) は、そのソケットファイルだけを同じパスに読み取り専用でマウントします
+- ホストの runtime dir をコンテナの `/run/user/<uid>` に**同じパスでマウントしてはいけません**。コンテナの logind がそのディレクトリを
+  自分のものとして管理し、cockpit ログイン時にホストの session bus や `systemd --user` のソケットを作り直し、ログアウト時には
+  `user-runtime-dir@.service` の停止処理で中身をすべて削除してしまいます (ホストの Wayland ソケットや session bus が消えます)
+- コンテナ内の `/run/user/<uid>` は、コンテナの logind が GUI ユーザー用に作る tmpfs です。`gui-user-setup` がこのユーザーを linger に
+  しているので起動時から存在し (session bus 付き)、cockpit からログアウトしても消えません。GUI アプリと cockpit-bridge はこれを使います
 - `/tmp/.X11-unix` を **読み取り専用**でマウント (X11 フォールバック用)。読み取り専用にするのは、
   コンテナの systemd-tmpfiles がホストの X ソケットを削除してしまうのを防ぐためです (同じ理由で `tmpfiles.d/x11.conf` をマスク)
-- `XAUTHORITY` があれば渡す。`PULSE_SERVER` は WSLg のものを渡すか、`$XDG_RUNTIME_DIR/pulse/native` を使う
 - コンテナ内の GUI/cockpit ユーザーは、起動時に `gui-user.service` が `kvm.sh up` を実行したホストユーザーの
   名前・uid/gid・パスワードハッシュに合わせます (イメージ内のテンプレートユーザー `admin` をリネーム)。
-  ホストの `/run/user/<uid>` は 0700 なので uid の一致が必要で、cockpit はコンテナ内の `/etc/shadow` で認証するため
+  ホストの runtime dir は 0700 なので、その中のソケットに届くには uid の一致が必要で、cockpit はコンテナ内の `/etc/shadow` で認証するため
   パスワードハッシュもコピーします。ハッシュは `podman run --env-file` で渡します (コマンドラインには出ません)。
   ホストでパスワードを変えたら `./kvm.sh down` → `./kvm.sh up` で反映されます
 - WSL、または `/dev/dri` が無いホストではソフトウェア描画 (`LIBGL_ALWAYS_SOFTWARE=1`) を使います
@@ -165,4 +171,13 @@ env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が�
 ./kvm.sh up && ./kvm.sh firefox
 sudo podman exec kvm ls -la /dev/dri                  # renderD* が 0666
 sudo ausearch -m avc -ts recent                        # SELinux 拒否が無いこと
+```
+
+### Windows + WSL2 での確認手順
+
+```bash
+./kvm.sh up && ./kvm.sh firefox                       # WSLg 経由で Windows デスクトップに Firefox (cockpit) が出ること
+sudo podman exec kvm ss -xp | grep wayland            # /mnt/wslg/runtime-dir/wayland-0 に接続していること (X11 フォールバックではない)
+sudo podman exec kvm findmnt /run/user/$UID           # コンテナ専用の tmpfs であること (ホストの runtime dir ではない)
+ls -A /run/user/$UID && systemctl --user is-system-running   # cockpit にログイン→ログアウトした後も、ホスト側の一覧が変わらず running のままであること
 ```

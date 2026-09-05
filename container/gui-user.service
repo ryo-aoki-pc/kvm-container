@@ -2,7 +2,8 @@
 Description=Mirror the host user (name, uid/gid, password) into the container's GUI/cockpit user
 DefaultDependencies=no
 After=local-fs.target
-Before=cockpit.socket virtqemud.socket
+# before logind: it reads /var/lib/systemd/linger only at startup, and gui-user-setup creates the linger file
+Before=systemd-logind.service cockpit.socket virtqemud.socket
 
 [Service]
 Type=oneshot

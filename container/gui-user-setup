@@ -1,15 +1,20 @@
 #!/bin/bash
 # make the container's GUI/cockpit user mirror the host user: name, uid/gid and password hash
-# (the host's /run/user/<uid> is 0700, so the uid must match to open the Wayland/X11 sockets;
-#  cockpit authenticates against the container's /etc/shadow, so the host password hash is copied in)
+# (the host's runtime dir is mounted read-only at /run/host-xdg-runtime and is 0700, so the uid must match to reach the
+#  Wayland/X11 sockets in it; cockpit authenticates against the container's /etc/shadow, so the host password hash is copied in)
 # HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH are passed with podman run -e / --env-file and can only be
-# read from the environment of PID 1 (systemd). The image ships a template user "admin" (uid 1000) that gets renamed
+# read from the environment of PID 1 (systemd). The image ships a template user "admin" (uid 1000) that gets renamed.
+# The user is also made to linger: logind then starts its systemd --user instance at boot, which gives the container
+# its OWN /run/user/<uid> (a tmpfs) with a session bus for the GUI apps and cockpit-bridge, and keeps it when the last
+# cockpit session ends. Nothing here touches the host's runtime dir (it is never mounted at /run/user/<uid>, see kvm.sh)
 set -e
 template=admin
 env_of_pid1() { tr '\0' '\n' </proc/1/environ | sed -n "s/^$1=//p"; }
+# same effect as loginctl enable-linger, but works before logind is running (this service runs in sysinit.target)
+enable_linger() { mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$1"; }
 want_user=$(env_of_pid1 HOST_USER); want_uid=$(env_of_pid1 HOST_UID); want_gid=$(env_of_pid1 HOST_GID)
 hash=$(env_of_pid1 HOST_PASSWORD_HASH)
-[ -n "$want_uid" ] || exit 0
+[ -n "$want_uid" ] || { enable_linger "$template"; exit 0; }
 [ -n "$want_gid" ] || want_gid=$want_uid
 [ -n "$want_user" ] || want_user=$template
 
@@ -60,4 +65,9 @@ else
   echo "gui-user: no host password hash passed; $user stays locked (cockpit login not possible)"
   usermod -L "$user"
 fi
-chown -R "$want_uid:$want_gid" "/home/$user"
+
+echo "gui-user: enable lingering for $user (container-private /run/user/$want_uid and session bus from boot)"
+[ "$user" = "$template" ] || rm -f "/var/lib/systemd/linger/$template"
+enable_linger "$user"
+# the home directory is normally bind-mounted from the host (data/home); skip if it is absent so the service does not fail
+[ ! -d "/home/$user" ] || chown -R "$want_uid:$want_gid" "/home/$user"

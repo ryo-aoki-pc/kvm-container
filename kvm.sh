@@ -31,6 +31,7 @@ HOST_USER=$(id -un)                    # the container's GUI/cockpit user mirror
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libvirt / home), inside the repository
+HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the container
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-manager firefox"    # apps that get a .desktop entry (subcommand names of container/gui)
 
@@ -78,22 +79,64 @@ host_user_args() {
   esac
 }
 
-# build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio) into the container
+# build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio) into the container.
+# The host's XDG_RUNTIME_DIR is mounted READ-ONLY at HOST_RUNTIME_DIR and never at /run/user/<uid>: that path belongs to
+# the container's own logind, which would otherwise take over the host's sockets on a cockpit login (systemd --user,
+# dbus-broker) and delete the whole directory when the session ends (user-runtime-dir@.service). The sockets are
+# therefore passed as absolute paths; connecting to a unix socket works on a read-only mount
 GUI_ARGS=()
+RO_MOUNTS=()
+HOST_RT=                      # the host's XDG_RUNTIME_DIR (set by gui_args)
+
+# bind-mount a host path read-only at the same path in the container, once (skipped if it or a parent is already mounted).
+# Used for the socket files themselves (a bind mount of a socket file works for connect()), never for their parent
+# directories, which could be /tmp or $HOME and would shadow the container's own directories
+add_ro_mount() {
+  local path=$1 m
+  for m in ${RO_MOUNTS[@]+"${RO_MOUNTS[@]}"}; do
+    case "$path" in "$m"|"$m"/*) return 0 ;; esac
+  done
+  RO_MOUNTS+=("$path")
+  GUI_ARGS+=(-v "$path:$path:ro")
+}
+
+# print the path under which a file/socket of the host session is reachable inside the container.
+# A relative path is taken relative to the host runtime dir, symlinks are resolved first (WSLg links
+# /run/user/<uid>/wayland-0 to /mnt/wslg/runtime-dir/wayland-0). Targets inside the host runtime dir map to
+# HOST_RUNTIME_DIR (returns 0); anything else is printed as-is and returns 1 so that the caller mounts it
+map_rt_path() {
+  local p=$1 real
+  case "$p" in /*) ;; *) p=$HOST_RT/$p ;; esac
+  real=$(readlink -f "$p" 2>/dev/null || echo "$p")
+  case "$real" in
+    "$HOST_RT"/*) echo "$HOST_RUNTIME_DIR${real#"$HOST_RT"}"; return 0 ;;
+    *)            echo "$real"; return 1 ;;
+  esac
+}
+
 gui_args() {
-  local rt x11 xauth pulse ppath
+  local wl x11 xauth pulse ppath
   if [ "$KVM_HOST" = headless ] || { [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; }; then
     echo ">> no display found: GUI disabled, use cockpit in a browser"
     return 0
   fi
-  rt=${XDG_RUNTIME_DIR:-}
-  if [ -z "$rt" ] && is_wsl; then rt=/mnt/wslg/runtime-dir; fi
-  if [ ! -d "$rt" ]; then
-    echo "!! XDG_RUNTIME_DIR ($rt) does not exist. Run this from a terminal inside a desktop session" >&2
+  HOST_RT=${XDG_RUNTIME_DIR:-}
+  if [ -z "$HOST_RT" ] && is_wsl; then HOST_RT=/mnt/wslg/runtime-dir; fi
+  if [ ! -d "$HOST_RT" ]; then
+    echo "!! XDG_RUNTIME_DIR ($HOST_RT) does not exist. Run this from a terminal inside a desktop session" >&2
     exit 1
   fi
-  GUI_ARGS+=(-v "$rt:$rt" -e "XDG_RUNTIME_DIR=$rt")
-  [ -n "${WAYLAND_DISPLAY:-}" ] && GUI_ARGS+=(-e "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+  GUI_ARGS+=(-v "$HOST_RT:$HOST_RUNTIME_DIR:ro" -e "HOST_RUNTIME_DIR=$HOST_RUNTIME_DIR")
+  if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    case "$WAYLAND_DISPLAY" in /*) wl=$WAYLAND_DISPLAY ;; *) wl=$HOST_RT/$WAYLAND_DISPLAY ;; esac
+    if [ -S "$wl" ]; then
+      # pass the socket as an absolute path (accepted by libwayland >= 1.15); mount the socket itself if it is outside the runtime dir
+      wl=$(map_rt_path "$wl") || add_ro_mount "$wl"
+      GUI_ARGS+=(-e "WAYLAND_DISPLAY=$wl")
+    else
+      echo "!! WAYLAND_DISPLAY=$WAYLAND_DISPLAY is not a socket ($wl); Wayland disabled, X11 is used if DISPLAY is set" >&2
+    fi
+  fi
   if [ -n "${DISPLAY:-}" ]; then
     x11=$(readlink -f /tmp/.X11-unix 2>/dev/null || true)
     if [ -d "$x11" ]; then
@@ -101,20 +144,24 @@ gui_args() {
       GUI_ARGS+=(-v "$x11:/tmp/.X11-unix:ro" -e "DISPLAY=$DISPLAY")
       xauth=${XAUTHORITY:-}
       if [ -n "$xauth" ] && [ -r "$xauth" ]; then
+        xauth=$(map_rt_path "$xauth") || GUI_ARGS+=(-v "$xauth:$xauth:ro")
         GUI_ARGS+=(-e "XAUTHORITY=$xauth")
-        case "$xauth" in "$rt"/*) ;; *) GUI_ARGS+=(-v "$xauth:$xauth:ro") ;; esac
       fi
     fi
   fi
   pulse=${PULSE_SERVER:-}
-  if [ -z "$pulse" ] && [ -S "$rt/pulse/native" ]; then pulse="unix:$rt/pulse/native"; fi
-  if [ -n "$pulse" ]; then
-    GUI_ARGS+=(-e "PULSE_SERVER=$pulse")
-    case "$pulse" in
-      unix:*) ppath=${pulse#unix:}
-              case "$ppath" in "$rt"/*) ;; *) GUI_ARGS+=(-v "$(dirname "$ppath"):$(dirname "$ppath")") ;; esac ;;
-    esac
-  fi
+  if [ -z "$pulse" ] && [ -S "$HOST_RT/pulse/native" ]; then pulse="unix:$HOST_RT/pulse/native"; fi
+  case "$pulse" in
+    unix:*) ppath=${pulse#unix:}
+            if [ -S "$ppath" ]; then
+              ppath=$(map_rt_path "$ppath") || add_ro_mount "$ppath"
+              pulse=unix:$ppath
+            else
+              echo "!! PULSE_SERVER=$pulse is not a socket; audio disabled" >&2
+              pulse=
+            fi ;;
+  esac
+  if [ -n "$pulse" ]; then GUI_ARGS+=(-e "PULSE_SERVER=$pulse"); fi
   if is_wsl || [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; then
     GUI_ARGS+=(-e LIBGL_ALWAYS_SOFTWARE=1)
   fi
