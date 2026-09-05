@@ -58,6 +58,8 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ./kvm.sh clean          # コンテナと data/ のデータをすべて削除 (確認あり)
 ./kvm.sh install-service    # root の Quadlet (kvm-container.service) として登録 (後述)
 ./kvm.sh uninstall-service  # サービスの登録解除
+./kvm.sh install-desktop    # アクティビティ (アプリ一覧) から virt-manager / Firefox を起動できるようにする (後述)
+./kvm.sh uninstall-desktop  # 上記の解除
 ```
 
 cockpit はホストのブラウザからも `https://localhost:9090` で開けます (自己署名証明書)。
@@ -87,6 +89,8 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `container/cockpit.conf` | cockpit-ws の設定 |
 | `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` がプレースホルダを埋めて `/etc/containers/systemd/` に配置 |
 | `quadlet/user-runtime-dir.conf` | GUI ありのときにテンプレートの `[Unit]` に差し込む `Wants=` / `After=user-runtime-dir@<uid>.service` |
+| `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
+| `desktop/sudoers` | `kvm.sh launch` 用の sudoers テンプレート。`install-desktop` が `/etc/sudoers.d/kvm-container` に配置 |
 
 ### 表示の仕組み
 
@@ -163,6 +167,37 @@ root のシステムサービスにはログインユーザーのセッション
   先に tmpfs ができてからコンテナを起動します (`Requires=` にはしません。ログアウトで VM ごと止まるのを避けるため)
 - GNOME からログアウト/再ログインすると tmpfs が作り直されるため、対話起動と同様に `sudo systemctl restart kvm-container` が必要です
 - セッション環境が無い端末 (SSH など) や `KVM_HOST=headless` で `install-service` すると、GUI 無し (cockpit のみ) の `.container` になります
+
+## アクティビティ (アプリ一覧) から起動する
+
+GNOME のアクティビティで「仮想マシンマネージャー」「Firefox」を検索し、クリックで起動できるようにします
+(ホストに virt-manager を直接入れたときと同じ使い勝手。デスクトップにアイコンは置きません)。
+
+```bash
+./kvm.sh build                  # 先にイメージを作っておく
+./kvm.sh install-service        # 推奨: 未起動時にランチャーからコンテナを起動できるようになる (後述)
+./kvm.sh install-desktop        # GNOME にログインした端末で、sudo は付けずに実行 (途中でパスワードを聞かれます)
+```
+
+`install-desktop` が配置するもの:
+
+| 場所 | 内容 |
+| --- | --- |
+| `~/.local/share/applications/kvm-virt-manager.desktop` `kvm-firefox.desktop` | ランチャー。`Exec` は `<このリポジトリ>/kvm.sh launch <app>` (絶対パス) |
+| `~/.local/share/icons/hicolor/<size>/apps/{virt-manager,firefox}.png` | イメージ内のアイコンをコピー |
+| `/etc/sudoers.d/kvm-container` | `podman exec kvm gui firefox` と `podman exec kvm gui virt-manager` の 2 コマンド (引数まで完全一致) だけをパスワード無しで許可 |
+
+- アクティビティから起動したプロセスには端末が無く sudo のパスワードを入力できないため、`kvm.sh launch` は上の sudoers ルールで `sudo -n` を使います。
+  許可するのはコンテナ内で GUI アプリを起動する固定 2 コマンドだけで、ワイルドカードは使いません
+  (VM を扱える = libvirt グループ相当の権限をパスワード無しで与える点は、ホストに直接入れた virt-manager と同じです)
+- Firefox のエントリは `./kvm.sh firefox` と同じく cockpit (`https://localhost:9090`) を開きます
+- コンテナが起動していないとき: `install-service` 済みなら `systemctl start kvm-container` を試みます (polkit のパスワードダイアログが出ます。ログイン後 1 回)。
+  未登録なら通知で `./kvm.sh up` を案内します。`.container` の `[Install]` を有効にしてブート時自動起動にすればダイアログも出ません
+- 起動直後は、コンテナ内の `gui` が systemd の起動完了 (admin の uid 合わせ、virtqemud) を待ってからアプリを起動します
+- リポジトリを移動したら `./kvm.sh install-desktop` を再実行してください (`.desktop` は絶対パスです。`TryExec` により古いパスのエントリは自動で非表示になります)
+- 起動しない場合は `./kvm.sh logs` (コンテナ内 `/var/log/gui.log`) と `journalctl --user -b` を確認してください。失敗の理由はデスクトップ通知にも出ます
+- WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映しますが、未検証です。WSL には polkit エージェントが無いため未起動時の自動起動は効きません (通知のみ)
+- 解除は `./kvm.sh uninstall-desktop` (`.desktop`、アイコン、sudoers ルールを削除)
 
 ## 注意
 
