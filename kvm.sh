@@ -12,8 +12,10 @@
 #   ./kvm.sh shell            コンテナ内の root シェル
 #   ./kvm.sh logs             GUI アプリのログ
 #   ./kvm.sh clean            コンテナと KVM_DATA_DIR のデータを全部削除 (確認あり)
-#   ./kvm.sh install-service  systemd --user サービス (kvm-container) として登録 (GNOME ログイン後に手動起動する用)
+#   ./kvm.sh install-service  root の Quadlet (/etc/containers/systemd/kvm-container.container) として登録
+#                             (GNOME ログイン後に sudo systemctl start kvm-container で起動する用)
 #   ./kvm.sh uninstall-service  上記サービスの登録解除
+#   ./kvm.sh prepare          up の前処理だけ行う (kvm モジュール、イメージ、データディレクトリ)。Quadlet の ExecStartPre 用
 # 環境変数:
 #   KVM_HOST=auto|wsl|generic|headless  ホスト種別の自動判定を上書き
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit の公開アドレス/ポート (他 PC から開くなら 0.0.0.0)
@@ -25,7 +27,8 @@ cd "$(dirname "$0")"
 
 IMAGE=${IMAGE:-localhost/qemu-kvm-cockpit:latest}
 CONTAINER=${CONTAINER:-kvm}   # NAME は WSL がホスト名に使うので避ける
-PODMAN=${PODMAN:-"sudo podman"}
+# root で実行されたとき (Quadlet の ExecStartPre など) は sudo を挟まない
+if [ "$(id -u)" = 0 ]; then SUDO=; PODMAN=${PODMAN:-podman}; else SUDO=sudo; PODMAN=${PODMAN:-"sudo podman"}; fi
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9090}
@@ -33,9 +36,7 @@ HOST_UID=${HOST_UID:-$(id -u)}
 HOST_GID=${HOST_GID:-$(id -g)}
 KVM_DATA_DIR=${KVM_DATA_DIR:-$PWD/data}
 case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # 相対パスだと podman が named volume と解釈する
-SERVICE_UNIT=$HOME/.config/systemd/user/kvm-container.service   # install-service が生成するユーザーユニット
-SERVICE_CONF=$HOME/.config/kvm-container.conf                    # サービス用の環境変数ファイル (EnvironmentFile)
-SUDOERS_FILE=/etc/sudoers.d/kvm-container                        # サービスから sudo をパスワード無しで使うための設定
+QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が生成する Quadlet (→ kvm-container.service)
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -47,7 +48,7 @@ ensure_kvm() {
   if [ ! -e /dev/kvm ]; then
     command -v modprobe >/dev/null || { echo "!! modprobe がありません: sudo dnf install kmod" >&2; exit 1; }
     echo ">> loading kvm module"
-    if grep -q AuthenticAMD /proc/cpuinfo; then sudo modprobe kvm_amd; else sudo modprobe kvm_intel; fi
+    if grep -q AuthenticAMD /proc/cpuinfo; then $SUDO modprobe kvm_amd; else $SUDO modprobe kvm_intel; fi
   fi
   if [ ! -e /dev/kvm ]; then
     if is_wsl; then
@@ -57,7 +58,7 @@ ensure_kvm() {
     fi
     exit 1
   fi
-  sudo chmod 666 /dev/kvm
+  $SUDO chmod 666 /dev/kvm
 }
 
 # ホストのセッション (Wayland/X11/PulseAudio) をコンテナに持ち込むための podman 引数を GUI_ARGS に組み立てる
@@ -108,11 +109,20 @@ running() { $PODMAN container exists "$CONTAINER" 2>/dev/null && [ "$($PODMAN in
 # (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしてくれない)
 prepare_data_dir() {
   local dir=$1 src=$2
-  sudo mkdir -p "$dir"
-  if [ -n "$(sudo ls -A "$dir")" ]; then return 0; fi
+  $SUDO mkdir -p "$dir"
+  if [ -n "$($SUDO ls -A "$dir")" ]; then return 0; fi
   echo ">> seeding $dir from image $src"
   # コンテナ内で cp する (podman cp だと VOLUME 宣言のあるパスは空の匿名 volume が見えてしまう)
   $PODMAN run --rm --network none -v "$dir:/mnt/seed" "$IMAGE" cp -a "$src/." /mnt/seed/
+}
+
+# up の前処理 (Quadlet の ExecStartPre からも呼ぶ)
+prepare_all() {
+  ensure_kvm
+  $PODMAN image exists "$IMAGE" || "$0" build
+  prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
+  prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
+  prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
 }
 
 cmd=${1:-help}; shift || true
@@ -120,14 +130,15 @@ case "$cmd" in
   build)
     $PODMAN build -t "$IMAGE" -f Containerfile "$@" .
     ;;
+  prepare) prepare_all ;;
   up)
-    ensure_kvm
-    $PODMAN image exists "$IMAGE" || "$0" build
+    if [ -e "$QUADLET_FILE" ]; then
+      echo "!! $QUADLET_FILE が登録されています。sudo systemctl start kvm-container で起動してください (解除は ./kvm.sh uninstall-service)" >&2
+      exit 1
+    fi
+    prepare_all
     if running; then echo ">> $CONTAINER is already running"; exit 0; fi
     gui_args
-    prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
-    prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
-    prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
     $PODMAN rm -f "$CONTAINER" >/dev/null 2>&1 || true
     $PODMAN run -d --name "$CONTAINER" --hostname "$CONTAINER" \
       --privileged --systemd=always \
@@ -159,12 +170,101 @@ case "$cmd" in
   down)   $PODMAN rm -f -t 10 "$CONTAINER" ;;
   clean)  $PODMAN rm -f -t 10 "$CONTAINER" 2>/dev/null || true
           [ -d "$KVM_DATA_DIR" ] || { echo ">> $KVM_DATA_DIR はありません"; exit 0; }
-          echo ">> 削除対象: $KVM_DATA_DIR"; sudo du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
+          echo ">> 削除対象: $KVM_DATA_DIR"; $SUDO du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
           if [ "${KVM_CLEAN_YES:-0}" != 1 ]; then
             read -r -p "VM のディスク/定義ごと削除します。よろしいですか? [y/N] " ans
             [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> 中止しました"; exit 1; }
           fi
-          sudo rm -rf "$KVM_DATA_DIR" ;;
+          $SUDO rm -rf "$KVM_DATA_DIR" ;;
+  firefox|virt-manager)
+    running || "$0" up
+    $PODMAN exec "$CONTAINER" gui "$cmd" "$@" ;;
+  viewer)
+    running || "$0" up
+    $PODMAN exec "$CONTAINER" gui virt-viewer "$@" ;;
+  demo)
+    running || "$0" up
+    $PODMAN exec -it "$CONTAINER" demo-vm "$@" ;;
+  virsh)  $PODMAN exec -it "$CONTAINER" virsh -c qemu:///system "$@" ;;
+  shell)  $PODMAN exec -it "$CONTAINER" bash ;;
+  logs)   $PODMAN exec "$CONTAINER" sh -c 'tail -n 50 /var/log/gui.log; journalctl --no-pager -n 30 -u virtqemud -u cockpit.socket -u gui-user' ;;
+  install-service)
+    # root の Quadlet (.container) として登録する。GNOME (Wayland) のセッション環境はユーザーとデスクトップが決まれば
+    # 固定値 (/run/user/<uid>, wayland-0, :0, pulse/native) なので、今のセッションから読み取って .container に埋める。
+    # 唯一セッションごとに変わる XAUTHORITY は埋めず、コンテナ内の gui が実行時に探す。
+    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、GNOME にログインしたユーザーとして実行してください (セッション環境を読み取ります)" >&2; exit 1; }
+    gui_args
+    uid=$(id -u); gui_lines=""; unit_deps=""
+    i=0
+    while [ $i -lt ${#GUI_ARGS[@]} ]; do
+      opt=${GUI_ARGS[$i]}; val=${GUI_ARGS[$((i+1))]}
+      case "$opt:$val" in
+        -e:XAUTHORITY=*) ;;                                 # セッションごとに変わる → コンテナ内 gui が実行時に探す
+        -v:"${XAUTHORITY:-/nonexistent}:"*) ;;
+        -e:*) gui_lines+="Environment=$val"$'\n' ;;
+        -v:*) gui_lines+="Volume=$val"$'\n' ;;
+      esac
+      i=$((i+2))
+    done
+    # /run/user/<uid> (tmpfs) はログイン時に logind が作る。先にできていればログイン後に作られるソケットもコンテナから見える
+    case "${gui_lines}" in *"Volume=/run/user/$uid:"*) unit_deps="user-runtime-dir@$uid.service" ;; esac
+    tmp=$(mktemp)
+    {
+      echo "# kvm.sh install-service が生成 ($(date +%F))。設定を変えるときは環境変数を付けて install-service を再実行する"
+      echo "[Unit]"
+      echo "Description=qemu-kvm / libvirt / cockpit container (kvm.sh)"
+      if [ -n "$unit_deps" ]; then
+        echo "# ログインユーザーの /run/user/$uid (tmpfs) が先にできてから起動する (GUI 表示用)。ログアウトでは止めない"
+        echo "Wants=$unit_deps"
+        echo "After=$unit_deps"
+      fi
+      echo
+      echo "[Container]"
+      echo "ContainerName=$CONTAINER"
+      echo "HostName=$CONTAINER"
+      echo "Image=$IMAGE"
+      echo "PodmanArgs=--privileged --systemd=always"
+      echo "ShmSize=2g"
+      echo "AddDevice=/dev/kvm"
+      echo "AddDevice=/dev/net/tun"
+      echo "PublishPort=$COCKPIT_BIND:$COCKPIT_PORT:9090"
+      echo "Volume=$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt"
+      echo "Volume=$KVM_DATA_DIR/etc-libvirt:/etc/libvirt"
+      echo "Volume=$KVM_DATA_DIR/home:/home/admin"
+      echo "Environment=TZ=${TZ:-Asia/Tokyo}"
+      if [ -n "$gui_lines" ]; then
+        echo "# ホストのセッション環境 (install-service 実行時の値)。XAUTHORITY はコンテナ内の gui が実行時に探す"
+        printf '%s' "$gui_lines"
+      fi
+      echo
+      echo "[Service]"
+      echo "# kvm モジュールのロード、イメージの確認、データディレクトリのシード"
+      echo "ExecStartPre=\"$PWD/kvm.sh\" prepare"
+      echo "TimeoutStartSec=30min"
+      echo
+      echo "# ブート時に自動起動したい場合は以下のコメントを外す"
+      echo "#[Install]"
+      echo "#WantedBy=multi-user.target"
+    } >"$tmp"
+    sudo install -m 0644 -o root -g root -D "$tmp" "$QUADLET_FILE"; rm -f "$tmp"
+    sudo systemctl daemon-reload
+    if ! sudo systemctl cat kvm-container.service >/dev/null 2>&1; then
+      echo "!! Quadlet が kvm-container.service を生成できませんでした (podman 4.4 以降が必要)。" >&2
+      echo "   sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun でエラーを確認してください" >&2
+      exit 1
+    fi
+    echo ">> installed: $QUADLET_FILE"
+    [ -n "$gui_lines" ] || echo ">> (GUI 無し: セッション環境が無いので cockpit のみ。GNOME にログインした端末から実行すると GUI 付きになります)"
+    echo ">> start:     sudo systemctl start kvm-container     (stop / status / restart も同様)"
+    echo ">> logs:      journalctl -u kvm-container"
+    echo ">> note:      GNOME からログアウト/再ログインしたら sudo systemctl restart kvm-container"
+    ;;
+  uninstall-service)
+    $SUDO systemctl stop kvm-container.service 2>/dev/null || true
+    $SUDO rm -f "$QUADLET_FILE"
+    $SUDO systemctl daemon-reload
+    echo ">> removed: $QUADLET_FILE"
+    ;;
   firefox|virt-manager)
     running || "$0" up
     $PODMAN exec "$CONTAINER" gui "$cmd" "$@" ;;
