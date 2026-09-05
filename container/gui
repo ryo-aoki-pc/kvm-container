@@ -33,7 +33,7 @@ if [ "${1:-}" = "virt-viewer" ]; then
   cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
 fi
 
-# right after the container starts (e.g. systemctl start from the Activities overview) wait for gui-user's uid alignment and for virtqemud
+# right after the container starts, wait for gui-user's uid alignment and for virtqemud
 # (returns immediately in steady state)
 timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
 

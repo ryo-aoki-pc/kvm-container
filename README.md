@@ -19,12 +19,15 @@ qemu-kvm / libvirt / cockpit / firefox / virt-viewer / virt-manager を 1 つの
 sudo dnf install podman
 ```
 
+リポジトリはユーザーのホームディレクトリ配下にクローンして使います (例: `git clone ... ~/kvm-container`)。
+VM のディスクや定義はその中の `data/` に置かれます。
+
 ### Windows + WSL2
 
 - Windows 11 (ネストした仮想化は既定で有効。無効なら `%USERPROFILE%\.wslconfig` に `[wsl2]` / `nestedVirtualization=true` を書いて `wsl --shutdown`)
 - WSL 2.5.1 以降 (cgroup v2 が既定)。`wsl --version` で確認
 - `modprobe` が無ければ `sudo dnf install kmod`。KVM モジュールは `kvm.sh up` が自動ロードします
-- `/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動きます)。後述の systemd サービス化を使う場合のみ必要
+- `/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動きます)
 
 ### 物理マシンの AlmaLinux 10 + GNOME
 
@@ -55,8 +58,6 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ./kvm.sh shell          # コンテナ内 root シェル
 ./kvm.sh down           # コンテナ停止・削除 (VM のディスク/定義はホストの data/ に残る)
 ./kvm.sh clean          # コンテナと data/ のデータをすべて削除 (確認あり)
-./kvm.sh install-service    # root の Quadlet (kvm-container.service) として登録 (後述)
-./kvm.sh uninstall-service  # サービスの登録解除
 ./kvm.sh install-desktop    # アクティビティ (アプリ一覧) から virt-manager / Firefox を起動できるようにする (後述)
 ./kvm.sh uninstall-desktop  # 上記の解除
 ```
@@ -72,7 +73,6 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `HOST_UID` / `HOST_GID` | 実行ユーザー | コンテナ内 GUI ユーザー admin の uid/gid |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
-| `KVM_DATA_DIR` | `./data` | 永続化用のホストディレクトリ (下記) |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
 
 ## 構成
@@ -85,10 +85,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `container/gui-user-setup` + `gui-user.service` | 起動時に admin の uid/gid をホストユーザーに合わせる |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
-| `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` がプレースホルダを埋めて `/etc/containers/systemd/` に配置 |
-| `quadlet/user-runtime-dir.conf` | GUI ありのときにテンプレートの `[Unit]` に差し込む `Wants=` / `After=user-runtime-dir@<uid>.service` |
 | `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
-| `desktop/sudoers` | `kvm.sh launch` 用の sudoers テンプレート。`install-desktop` が `/etc/sudoers.d/kvm-container` に配置 |
 
 ### 表示の仕組み
 
@@ -105,7 +102,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 
 ### 永続化 (ホストディレクトリのバインドマウント)
 
-`KVM_DATA_DIR` (既定: リポジトリ内の `data/`、git 管理外) 配下のディレクトリをコンテナにバインドマウントします。
+リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントします。
 
 | ホスト | コンテナ | 内容 |
 | --- | --- | --- |
@@ -117,54 +114,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
   (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしないため)
 - `sudo podman` で動かすため、ファイルは root や qemu 所有になります。ホストから編集する場合は `sudo` を使ってください
 - コンテナは `--privileged` (SELinux ラベル分離なし) なので、SELinux が Enforcing のホストでも `:Z` などのラベル付けは不要です
-- `./kvm.sh clean` は確認のうえ `KVM_DATA_DIR` ごと削除します
-
-## systemd サービスとして起動する (GNOME ログイン後)
-
-コンテナを root の Quadlet (`/etc/containers/systemd/kvm-container.container` → `kvm-container.service`) として登録し、
-`sudo systemctl start / stop / status kvm-container` で扱えるようにします。
-ブート時の自動起動ではなく、GNOME にログインしたあと手動で起動する使い方を想定しています。
-
-```bash
-./kvm.sh build                  # 先にイメージを作っておく
-./kvm.sh install-service        # GNOME にログインした端末で、sudo は付けずに実行 (途中でパスワードを聞かれます)
-sudo systemctl start kvm-container
-sudo systemctl status kvm-container
-sudo systemctl stop kvm-container     # コンテナを停止・削除 (データは data/ に残る)
-journalctl -u kvm-container           # 起動ログ
-```
-
-- `install-service` はテンプレート `quadlet/kvm-container.container` のプレースホルダを、今のシェルの環境変数
-  (`COCKPIT_BIND` `COCKPIT_PORT` `KVM_DATA_DIR` `TZ` `KVM_SOFTWARE_GL` など) とセッション環境で埋めて配置します。
-  設定を変えるときは環境変数を付けて再実行します
-  (例: `COCKPIT_BIND=0.0.0.0 ./kvm.sh install-service` → `sudo systemctl restart kvm-container`)
-- `[Service] ExecStartPre=kvm.sh prepare` で、kvm モジュールのロード、`/dev/kvm` の権限調整、`data/` のシード、
-  イメージが無ければ build を root で行います。sudoers の設定は不要です
-- サービスで起動したコンテナでも `./kvm.sh firefox` / `virt-manager` / `viewer` / `virsh` はそのまま使えます (コンテナは同じものです)。
-  起動・停止は `systemctl` で行ってください (登録中は `./kvm.sh up` は案内だけ出して終了します)
-- ブート時に自動起動したい場合は `.container` 末尾のコメントを外して `[Install] WantedBy=multi-user.target` を有効にします
-- 解除は `./kvm.sh uninstall-service` (サービスを停止し `.container` を削除)
-- WSL2 で使うには `/etc/wsl.conf` に `[boot]` / `systemd=true` が必要です。WSLg の `XDG_RUNTIME_DIR` (`/mnt/wslg/runtime-dir`)
-  は常設の固定パスなのでそのまま埋め込みますが、サービス経由でのホスト画面表示は未検証です
-
-### root の Quadlet でセッション環境 (GUI) を扱う仕組み
-
-root のシステムサービスにはログインユーザーのセッション環境はありませんが、GNOME (Wayland) では
-「ユーザーとデスクトップが決まればセッション環境はほぼ固定値」なので、登録時に値を埋めておけば動きます。
-
-| 項目 | 値 | 備考 |
-| --- | --- | --- |
-| `XDG_RUNTIME_DIR` | `/run/user/<uid>` | tmpfs をバインドマウントしておけば、後から作られる Wayland / Pulse のソケットもコンテナから見える |
-| `WAYLAND_DISPLAY` | `wayland-0` | GNOME は固定 |
-| `DISPLAY` | `:0` | X11 はフォールバック用 |
-| `PULSE_SERVER` | `unix:/run/user/<uid>/pulse/native` | 固定 |
-| `HOST_UID` / `HOST_GID` | 実行ユーザーの uid/gid | 固定 |
-| `XAUTHORITY` | `.mutter-Xwaylandauth.XXXXXX` | セッションごとに名前が変わるので埋めない。コンテナ内の `gui` が起動時に `$XDG_RUNTIME_DIR` から探す |
-
-- `/run/user/<uid>` はログイン時に logind が作る tmpfs なので、`.container` に `Wants=` / `After=user-runtime-dir@<uid>.service` を付け、
-  先に tmpfs ができてからコンテナを起動します (`Requires=` にはしません。ログアウトで VM ごと止まるのを避けるため)
-- GNOME からログアウト/再ログインすると tmpfs が作り直されるため、対話起動と同様に `sudo systemctl restart kvm-container` が必要です
-- セッション環境が無い端末 (SSH など) や `KVM_HOST=headless` で `install-service` すると、GUI 無し (cockpit のみ) の `.container` になります
+- `./kvm.sh clean` は確認のうえ `data/` ごと削除します
 
 ## アクティビティ (アプリ一覧) から起動する
 
@@ -173,8 +123,8 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 
 ```bash
 ./kvm.sh build                  # 先にイメージを作っておく
-./kvm.sh install-service        # 推奨: 未起動時にランチャーからコンテナを起動できるようになる (後述)
-./kvm.sh install-desktop        # GNOME にログインした端末で、sudo は付けずに実行 (途中でパスワードを聞かれます)
+./kvm.sh install-desktop        # デスクトップにログインした端末で、sudo は付けずに実行
+./kvm.sh up                     # コンテナは起動しておく
 ```
 
 `install-desktop` が配置するもの:
@@ -183,19 +133,16 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 | --- | --- |
 | `~/.local/share/applications/kvm-virt-manager.desktop` `kvm-firefox.desktop` | ランチャー。`Exec` は `<このリポジトリ>/kvm.sh launch <app>` (絶対パス) |
 | `~/.local/share/icons/hicolor/<size>/apps/{virt-manager,firefox}.png` | イメージ内のアイコンをコピー |
-| `/etc/sudoers.d/kvm-container` | `podman exec kvm gui firefox` と `podman exec kvm gui virt-manager` の 2 コマンド (引数まで完全一致) だけをパスワード無しで許可 |
 
-- アクティビティから起動したプロセスには端末が無く sudo のパスワードを入力できないため、`kvm.sh launch` は上の sudoers ルールで `sudo -n` を使います。
-  許可するのはコンテナ内で GUI アプリを起動する固定 2 コマンドだけで、ワイルドカードは使いません
-  (VM を扱える = libvirt グループ相当の権限をパスワード無しで与える点は、ホストに直接入れた virt-manager と同じです)
+- アクティビティから起動したプロセスには端末が無く sudo のパスワードを入力できないため、`kvm.sh launch` は `sudo -n podman exec kvm gui <app>` を実行します。
+  実行ユーザーがパスワード無しで `sudo podman` を実行できるように、sudoers を事前に設定しておいてください
 - Firefox のエントリは `./kvm.sh firefox` と同じく cockpit (`https://localhost:9090`) を開きます
-- コンテナが起動していないとき: `install-service` 済みなら `systemctl start kvm-container` を試みます (polkit のパスワードダイアログが出ます。ログイン後 1 回)。
-  未登録なら通知で `./kvm.sh up` を案内します。`.container` の `[Install]` を有効にしてブート時自動起動にすればダイアログも出ません
+- コンテナが起動していないときは、通知で `./kvm.sh up` を案内します
 - 起動直後は、コンテナ内の `gui` が systemd の起動完了 (admin の uid 合わせ、virtqemud) を待ってからアプリを起動します
 - リポジトリを移動したら `./kvm.sh install-desktop` を再実行してください (`.desktop` は絶対パスです。`TryExec` により古いパスのエントリは自動で非表示になります)
 - 起動しない場合は `./kvm.sh logs` (コンテナ内 `/var/log/gui.log`) と `journalctl --user -b` を確認してください。失敗の理由はデスクトップ通知にも出ます
-- WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映しますが、未検証です。WSL には polkit エージェントが無いため未起動時の自動起動は効きません (通知のみ)
-- 解除は `./kvm.sh uninstall-desktop` (`.desktop`、アイコン、sudoers ルールを削除)
+- WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映しますが、未検証です
+- 解除は `./kvm.sh uninstall-desktop` (`.desktop` とアイコンを削除)
 
 ## 注意
 
@@ -203,7 +150,7 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 - GNOME からログアウト/再ログインすると `/run/user/<uid>` が作り直されるため、`./kvm.sh down` → `./kvm.sh up` してください。
   ホスト側の `DISPLAY` 等を変えた場合も同様です。
 - RHEL 10 系の qemu-kvm には SPICE がないため、グラフィックスは VNC を使っています。
-- 環境変数 `NAME` は WSL がホスト名に使っているため、スクリプトのコンテナ名は `CONTAINER` で指定します。
+- コンテナ名は `kvm` 固定です (スクリプト内の変数名は `CONTAINER`。`NAME` は WSL がホスト名に使うため避けています)。
 
 ### 物理 AlmaLinux 10 GNOME での確認手順
 
