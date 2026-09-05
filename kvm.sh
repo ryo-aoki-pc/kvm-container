@@ -36,7 +36,8 @@ HOST_UID=${HOST_UID:-$(id -u)}
 HOST_GID=${HOST_GID:-$(id -g)}
 KVM_DATA_DIR=${KVM_DATA_DIR:-$PWD/data}
 case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # 相対パスだと podman が named volume と解釈する
-QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が生成する Quadlet (→ kvm-container.service)
+QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が配置する Quadlet (→ kvm-container.service)
+QUADLET_TEMPLATE=$PWD/quadlet/kvm-container.container          # そのテンプレート (@...@ と # @GUI@ / # @UNIT_DEPS@ を置き換える)
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -193,60 +194,37 @@ case "$cmd" in
     # 固定値 (/run/user/<uid>, wayland-0, :0, pulse/native) なので、今のセッションから読み取って .container に埋める。
     # 唯一セッションごとに変わる XAUTHORITY は埋めず、コンテナ内の gui が実行時に探す。
     [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、GNOME にログインしたユーザーとして実行してください (セッション環境を読み取ります)" >&2; exit 1; }
+    [ -r "$QUADLET_TEMPLATE" ] || { echo "!! テンプレート $QUADLET_TEMPLATE がありません" >&2; exit 1; }
     gui_args
-    uid=$(id -u); gui_lines=""; unit_deps=""
+    uid=$(id -u)
+    tmp=$(mktemp); tmp_gui=$(mktemp); tmp_deps=$(mktemp)
+    trap 'rm -f "$tmp" "$tmp_gui" "$tmp_deps"' EXIT
+    # gui_args の -v / -e をそのまま Quadlet の Volume= / Environment= にする
     i=0
     while [ $i -lt ${#GUI_ARGS[@]} ]; do
       opt=${GUI_ARGS[$i]}; val=${GUI_ARGS[$((i+1))]}
       case "$opt:$val" in
         -e:XAUTHORITY=*) ;;                                 # セッションごとに変わる → コンテナ内 gui が実行時に探す
         -v:"${XAUTHORITY:-/nonexistent}:"*) ;;
-        -e:*) gui_lines+="Environment=$val"$'\n' ;;
-        -v:*) gui_lines+="Volume=$val"$'\n' ;;
+        -e:*) echo "Environment=$val" >>"$tmp_gui" ;;
+        -v:*) echo "Volume=$val" >>"$tmp_gui" ;;
       esac
       i=$((i+2))
     done
     # /run/user/<uid> (tmpfs) はログイン時に logind が作る。先にできていればログイン後に作られるソケットもコンテナから見える
-    case "${gui_lines}" in *"Volume=/run/user/$uid:"*) unit_deps="user-runtime-dir@$uid.service" ;; esac
-    tmp=$(mktemp)
-    {
-      echo "# kvm.sh install-service が生成 ($(date +%F))。設定を変えるときは環境変数を付けて install-service を再実行する"
-      echo "[Unit]"
-      echo "Description=qemu-kvm / libvirt / cockpit container (kvm.sh)"
-      if [ -n "$unit_deps" ]; then
-        echo "# ログインユーザーの /run/user/$uid (tmpfs) が先にできてから起動する (GUI 表示用)。ログアウトでは止めない"
-        echo "Wants=$unit_deps"
-        echo "After=$unit_deps"
-      fi
-      echo
-      echo "[Container]"
-      echo "ContainerName=$CONTAINER"
-      echo "HostName=$CONTAINER"
-      echo "Image=$IMAGE"
-      echo "PodmanArgs=--privileged --systemd=always"
-      echo "ShmSize=2g"
-      echo "AddDevice=/dev/kvm"
-      echo "AddDevice=/dev/net/tun"
-      echo "PublishPort=$COCKPIT_BIND:$COCKPIT_PORT:9090"
-      echo "Volume=$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt"
-      echo "Volume=$KVM_DATA_DIR/etc-libvirt:/etc/libvirt"
-      echo "Volume=$KVM_DATA_DIR/home:/home/admin"
-      echo "Environment=TZ=${TZ:-Asia/Tokyo}"
-      if [ -n "$gui_lines" ]; then
-        echo "# ホストのセッション環境 (install-service 実行時の値)。XAUTHORITY はコンテナ内の gui が実行時に探す"
-        printf '%s' "$gui_lines"
-      fi
-      echo
-      echo "[Service]"
-      echo "# kvm モジュールのロード、イメージの確認、データディレクトリのシード"
-      echo "ExecStartPre=\"$PWD/kvm.sh\" prepare"
-      echo "TimeoutStartSec=30min"
-      echo
-      echo "# ブート時に自動起動したい場合は以下のコメントを外す"
-      echo "#[Install]"
-      echo "#WantedBy=multi-user.target"
-    } >"$tmp"
-    sudo install -m 0644 -o root -g root -D "$tmp" "$QUADLET_FILE"; rm -f "$tmp"
+    if grep -q "^Volume=/run/user/$uid:" "$tmp_gui"; then
+      echo "# ログインユーザーの /run/user/$uid (tmpfs) が先にできてから起動する (GUI 表示用)。ログアウトでは止めない" >>"$tmp_deps"
+      echo "Wants=user-runtime-dir@$uid.service" >>"$tmp_deps"
+      echo "After=user-runtime-dir@$uid.service" >>"$tmp_deps"
+    fi
+    sed -e "s|@CONTAINER@|$CONTAINER|g" -e "s|@IMAGE@|$IMAGE|g" \
+        -e "s|@COCKPIT_BIND@|$COCKPIT_BIND|g" -e "s|@COCKPIT_PORT@|$COCKPIT_PORT|g" \
+        -e "s|@KVM_DATA_DIR@|$KVM_DATA_DIR|g" -e "s|@TZ@|${TZ:-Asia/Tokyo}|g" -e "s|@KVM_SH@|$PWD/kvm.sh|g" \
+        -e "/^# @UNIT_DEPS@\$/{r $tmp_deps" -e 'd' -e '}' \
+        -e "/^# @GUI@\$/{r $tmp_gui" -e 'd' -e '}' \
+        "$QUADLET_TEMPLATE" >"$tmp"
+    if grep -q '@[A-Z_]*@' "$tmp"; then echo "!! テンプレートに未置換のプレースホルダがあります: $(grep -o '@[A-Z_]*@' "$tmp" | sort -u | tr '\n' ' ')" >&2; exit 1; fi
+    sudo install -m 0644 -o root -g root -D "$tmp" "$QUADLET_FILE"
     sudo systemctl daemon-reload
     if ! sudo systemctl cat kvm-container.service >/dev/null 2>&1; then
       echo "!! Quadlet が kvm-container.service を生成できませんでした (podman 4.4 以降が必要)。" >&2
@@ -254,7 +232,7 @@ case "$cmd" in
       exit 1
     fi
     echo ">> installed: $QUADLET_FILE"
-    [ -n "$gui_lines" ] || echo ">> (GUI 無し: セッション環境が無いので cockpit のみ。GNOME にログインした端末から実行すると GUI 付きになります)"
+    [ -s "$tmp_gui" ] || echo ">> (GUI 無し: セッション環境が無いので cockpit のみ。GNOME にログインした端末から実行すると GUI 付きになります)"
     echo ">> start:     sudo systemctl start kvm-container     (stop / status / restart も同様)"
     echo ">> logs:      journalctl -u kvm-container"
     echo ">> note:      GNOME からログアウト/再ログインしたら sudo systemctl restart kvm-container"

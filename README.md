@@ -85,6 +85,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `container/demo-vm` | Alpine ISO を取得して `virt-install` で VM を作成し virt-viewer を開く |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
+| `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` がプレースホルダを埋めて `/etc/containers/systemd/` に配置 |
 
 ### 表示の仕組み
 
@@ -130,8 +131,9 @@ sudo systemctl stop kvm-container     # コンテナを停止・削除 (デー�
 journalctl -u kvm-container           # 起動ログ
 ```
 
-- `install-service` は今のシェルの環境変数 (`COCKPIT_BIND` `COCKPIT_PORT` `KVM_DATA_DIR` `TZ` `KVM_SOFTWARE_GL` など) と
-  セッション環境を読み取って `.container` を生成します。設定を変えるときは環境変数を付けて再実行します
+- `install-service` はテンプレート `quadlet/kvm-container.container` のプレースホルダを、今のシェルの環境変数
+  (`COCKPIT_BIND` `COCKPIT_PORT` `KVM_DATA_DIR` `TZ` `KVM_SOFTWARE_GL` など) とセッション環境で埋めて配置します。
+  設定を変えるときは環境変数を付けて再実行します
   (例: `COCKPIT_BIND=0.0.0.0 ./kvm.sh install-service` → `sudo systemctl restart kvm-container`)
 - `[Service] ExecStartPre=kvm.sh prepare` で、kvm モジュールのロード、`/dev/kvm` の権限調整、`data/` のシード、
   イメージが無ければ build を root で行います。sudoers の設定は不要です
