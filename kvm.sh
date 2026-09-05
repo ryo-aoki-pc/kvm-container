@@ -12,6 +12,10 @@
 #   ./kvm.sh shell            コンテナ内の root シェル
 #   ./kvm.sh logs             GUI アプリのログ
 #   ./kvm.sh clean            コンテナと KVM_DATA_DIR のデータを全部削除 (確認あり)
+#   ./kvm.sh install-service  root の Quadlet (/etc/containers/systemd/kvm-container.container) として登録
+#                             (GNOME ログイン後に sudo systemctl start kvm-container で起動する用)
+#   ./kvm.sh uninstall-service  上記サービスの登録解除
+#   ./kvm.sh prepare          up の前処理だけ行う (kvm モジュール、イメージ、データディレクトリ)。Quadlet の ExecStartPre 用
 # 環境変数:
 #   KVM_HOST=auto|wsl|generic|headless  ホスト種別の自動判定を上書き
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit の公開アドレス/ポート (他 PC から開くなら 0.0.0.0)
@@ -23,7 +27,8 @@ cd "$(dirname "$0")"
 
 IMAGE=${IMAGE:-localhost/qemu-kvm-cockpit:latest}
 CONTAINER=${CONTAINER:-kvm}   # NAME は WSL がホスト名に使うので避ける
-PODMAN=${PODMAN:-"sudo podman"}
+# root で実行されたとき (Quadlet の ExecStartPre など) は sudo を挟まない
+if [ "$(id -u)" = 0 ]; then SUDO=; PODMAN=${PODMAN:-podman}; else SUDO=sudo; PODMAN=${PODMAN:-"sudo podman"}; fi
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9090}
@@ -31,6 +36,9 @@ HOST_UID=${HOST_UID:-$(id -u)}
 HOST_GID=${HOST_GID:-$(id -g)}
 KVM_DATA_DIR=${KVM_DATA_DIR:-$PWD/data}
 case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # 相対パスだと podman が named volume と解釈する
+QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が配置する Quadlet (→ kvm-container.service)
+QUADLET_TEMPLATE=$PWD/quadlet/kvm-container.container          # そのテンプレート (@...@ と # @GUI@ / # @UNIT_DEPS@ を置き換える)
+QUADLET_DEPS=$PWD/quadlet/user-runtime-dir.conf                # # @UNIT_DEPS@ に入れる行 (GUI ありのとき)
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -42,7 +50,7 @@ ensure_kvm() {
   if [ ! -e /dev/kvm ]; then
     command -v modprobe >/dev/null || { echo "!! modprobe がありません: sudo dnf install kmod" >&2; exit 1; }
     echo ">> loading kvm module"
-    if grep -q AuthenticAMD /proc/cpuinfo; then sudo modprobe kvm_amd; else sudo modprobe kvm_intel; fi
+    if grep -q AuthenticAMD /proc/cpuinfo; then $SUDO modprobe kvm_amd; else $SUDO modprobe kvm_intel; fi
   fi
   if [ ! -e /dev/kvm ]; then
     if is_wsl; then
@@ -52,7 +60,7 @@ ensure_kvm() {
     fi
     exit 1
   fi
-  sudo chmod 666 /dev/kvm
+  $SUDO chmod 666 /dev/kvm
 }
 
 # ホストのセッション (Wayland/X11/PulseAudio) をコンテナに持ち込むための podman 引数を GUI_ARGS に組み立てる
@@ -103,11 +111,20 @@ running() { $PODMAN container exists "$CONTAINER" 2>/dev/null && [ "$($PODMAN in
 # (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしてくれない)
 prepare_data_dir() {
   local dir=$1 src=$2
-  sudo mkdir -p "$dir"
-  if [ -n "$(sudo ls -A "$dir")" ]; then return 0; fi
+  $SUDO mkdir -p "$dir"
+  if [ -n "$($SUDO ls -A "$dir")" ]; then return 0; fi
   echo ">> seeding $dir from image $src"
   # コンテナ内で cp する (podman cp だと VOLUME 宣言のあるパスは空の匿名 volume が見えてしまう)
   $PODMAN run --rm --network none -v "$dir:/mnt/seed" "$IMAGE" cp -a "$src/." /mnt/seed/
+}
+
+# up の前処理 (Quadlet の ExecStartPre からも呼ぶ)
+prepare_all() {
+  ensure_kvm
+  $PODMAN image exists "$IMAGE" || "$0" build
+  prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
+  prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
+  prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
 }
 
 cmd=${1:-help}; shift || true
@@ -115,14 +132,15 @@ case "$cmd" in
   build)
     $PODMAN build -t "$IMAGE" -f Containerfile "$@" .
     ;;
+  prepare) prepare_all ;;
   up)
-    ensure_kvm
-    $PODMAN image exists "$IMAGE" || "$0" build
+    if [ -e "$QUADLET_FILE" ]; then
+      echo "!! $QUADLET_FILE が登録されています。sudo systemctl start kvm-container で起動してください (解除は ./kvm.sh uninstall-service)" >&2
+      exit 1
+    fi
+    prepare_all
     if running; then echo ">> $CONTAINER is already running"; exit 0; fi
     gui_args
-    prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
-    prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
-    prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
     $PODMAN rm -f "$CONTAINER" >/dev/null 2>&1 || true
     $PODMAN run -d --name "$CONTAINER" --hostname "$CONTAINER" \
       --privileged --systemd=always \
@@ -154,12 +172,12 @@ case "$cmd" in
   down)   $PODMAN rm -f -t 10 "$CONTAINER" ;;
   clean)  $PODMAN rm -f -t 10 "$CONTAINER" 2>/dev/null || true
           [ -d "$KVM_DATA_DIR" ] || { echo ">> $KVM_DATA_DIR はありません"; exit 0; }
-          echo ">> 削除対象: $KVM_DATA_DIR"; sudo du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
+          echo ">> 削除対象: $KVM_DATA_DIR"; $SUDO du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
           if [ "${KVM_CLEAN_YES:-0}" != 1 ]; then
             read -r -p "VM のディスク/定義ごと削除します。よろしいですか? [y/N] " ans
             [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> 中止しました"; exit 1; }
           fi
-          sudo rm -rf "$KVM_DATA_DIR" ;;
+          $SUDO rm -rf "$KVM_DATA_DIR" ;;
   firefox|virt-manager)
     running || "$0" up
     $PODMAN exec "$CONTAINER" gui "$cmd" "$@" ;;
@@ -172,5 +190,57 @@ case "$cmd" in
   virsh)  $PODMAN exec -it "$CONTAINER" virsh -c qemu:///system "$@" ;;
   shell)  $PODMAN exec -it "$CONTAINER" bash ;;
   logs)   $PODMAN exec "$CONTAINER" sh -c 'tail -n 50 /var/log/gui.log; journalctl --no-pager -n 30 -u virtqemud -u cockpit.socket -u gui-user' ;;
-  *)      sed -n '2,20p' "$0" ;;
+  install-service)
+    # root の Quadlet (.container) として登録する。GNOME (Wayland) のセッション環境はユーザーとデスクトップが決まれば
+    # 固定値 (/run/user/<uid>, wayland-0, :0, pulse/native) なので、今のセッションから読み取って .container に埋める。
+    # 唯一セッションごとに変わる XAUTHORITY は埋めず、コンテナ内の gui が実行時に探す。
+    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、GNOME にログインしたユーザーとして実行してください (セッション環境を読み取ります)" >&2; exit 1; }
+    [ -r "$QUADLET_TEMPLATE" ] && [ -r "$QUADLET_DEPS" ] || { echo "!! テンプレート $QUADLET_TEMPLATE / $QUADLET_DEPS がありません" >&2; exit 1; }
+    gui_args
+    uid=$(id -u)
+    tmp=$(mktemp); tmp_gui=$(mktemp); tmp_deps=$(mktemp)
+    trap 'rm -f "$tmp" "$tmp_gui" "$tmp_deps"' EXIT
+    # gui_args の -v / -e をそのまま Quadlet の Volume= / Environment= にする
+    i=0
+    while [ $i -lt ${#GUI_ARGS[@]} ]; do
+      opt=${GUI_ARGS[$i]}; val=${GUI_ARGS[$((i+1))]}
+      case "$opt:$val" in
+        -e:XAUTHORITY=*) ;;                                 # セッションごとに変わる → コンテナ内 gui が実行時に探す
+        -v:"${XAUTHORITY:-/nonexistent}:"*) ;;
+        -e:*) echo "Environment=$val" >>"$tmp_gui" ;;
+        -v:*) echo "Volume=$val" >>"$tmp_gui" ;;
+      esac
+      i=$((i+2))
+    done
+    # /run/user/<uid> (tmpfs) はログイン時に logind が作る。先にできていればログイン後に作られるソケットもコンテナから見える
+    if grep -q "^Volume=/run/user/$uid:" "$tmp_gui"; then
+      sed "s|@UID@|$uid|g" "$QUADLET_DEPS" >"$tmp_deps"
+    fi
+    sed -e "s|@CONTAINER@|$CONTAINER|g" -e "s|@IMAGE@|$IMAGE|g" \
+        -e "s|@COCKPIT_BIND@|$COCKPIT_BIND|g" -e "s|@COCKPIT_PORT@|$COCKPIT_PORT|g" \
+        -e "s|@KVM_DATA_DIR@|$KVM_DATA_DIR|g" -e "s|@TZ@|${TZ:-Asia/Tokyo}|g" -e "s|@KVM_SH@|$PWD/kvm.sh|g" \
+        -e "/^# @UNIT_DEPS@\$/{r $tmp_deps" -e 'd' -e '}' \
+        -e "/^# @GUI@\$/{r $tmp_gui" -e 'd' -e '}' \
+        "$QUADLET_TEMPLATE" >"$tmp"
+    if grep -q '@[A-Z_]*@' "$tmp"; then echo "!! テンプレートに未置換のプレースホルダがあります: $(grep -o '@[A-Z_]*@' "$tmp" | sort -u | tr '\n' ' ')" >&2; exit 1; fi
+    sudo install -m 0644 -o root -g root -D "$tmp" "$QUADLET_FILE"
+    sudo systemctl daemon-reload
+    if ! sudo systemctl cat kvm-container.service >/dev/null 2>&1; then
+      echo "!! Quadlet が kvm-container.service を生成できませんでした (podman 4.4 以降が必要)。" >&2
+      echo "   sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun でエラーを確認してください" >&2
+      exit 1
+    fi
+    echo ">> installed: $QUADLET_FILE"
+    [ -s "$tmp_gui" ] || echo ">> (GUI 無し: セッション環境が無いので cockpit のみ。GNOME にログインした端末から実行すると GUI 付きになります)"
+    echo ">> start:     sudo systemctl start kvm-container     (stop / status / restart も同様)"
+    echo ">> logs:      journalctl -u kvm-container"
+    echo ">> note:      GNOME からログアウト/再ログインしたら sudo systemctl restart kvm-container"
+    ;;
+  uninstall-service)
+    $SUDO systemctl stop kvm-container.service 2>/dev/null || true
+    $SUDO rm -f "$QUADLET_FILE"
+    $SUDO systemctl daemon-reload
+    echo ">> removed: $QUADLET_FILE"
+    ;;
+  *)      sed -n '2,24p' "$0" ;;
 esac
