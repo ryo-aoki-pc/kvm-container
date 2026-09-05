@@ -38,6 +38,7 @@ KVM_DATA_DIR=${KVM_DATA_DIR:-$PWD/data}
 case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # 相対パスだと podman が named volume と解釈する
 QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が配置する Quadlet (→ kvm-container.service)
 QUADLET_TEMPLATE=$PWD/quadlet/kvm-container.container          # そのテンプレート (@...@ と # @GUI@ / # @UNIT_DEPS@ を置き換える)
+QUADLET_DEPS=$PWD/quadlet/user-runtime-dir.conf                # # @UNIT_DEPS@ に入れる行 (GUI ありのとき)
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -194,7 +195,7 @@ case "$cmd" in
     # 固定値 (/run/user/<uid>, wayland-0, :0, pulse/native) なので、今のセッションから読み取って .container に埋める。
     # 唯一セッションごとに変わる XAUTHORITY は埋めず、コンテナ内の gui が実行時に探す。
     [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、GNOME にログインしたユーザーとして実行してください (セッション環境を読み取ります)" >&2; exit 1; }
-    [ -r "$QUADLET_TEMPLATE" ] || { echo "!! テンプレート $QUADLET_TEMPLATE がありません" >&2; exit 1; }
+    [ -r "$QUADLET_TEMPLATE" ] && [ -r "$QUADLET_DEPS" ] || { echo "!! テンプレート $QUADLET_TEMPLATE / $QUADLET_DEPS がありません" >&2; exit 1; }
     gui_args
     uid=$(id -u)
     tmp=$(mktemp); tmp_gui=$(mktemp); tmp_deps=$(mktemp)
@@ -213,9 +214,7 @@ case "$cmd" in
     done
     # /run/user/<uid> (tmpfs) はログイン時に logind が作る。先にできていればログイン後に作られるソケットもコンテナから見える
     if grep -q "^Volume=/run/user/$uid:" "$tmp_gui"; then
-      echo "# ログインユーザーの /run/user/$uid (tmpfs) が先にできてから起動する (GUI 表示用)。ログアウトでは止めない" >>"$tmp_deps"
-      echo "Wants=user-runtime-dir@$uid.service" >>"$tmp_deps"
-      echo "After=user-runtime-dir@$uid.service" >>"$tmp_deps"
+      sed "s|@UID@|$uid|g" "$QUADLET_DEPS" >"$tmp_deps"
     fi
     sed -e "s|@CONTAINER@|$CONTAINER|g" -e "s|@IMAGE@|$IMAGE|g" \
         -e "s|@COCKPIT_BIND@|$COCKPIT_BIND|g" -e "s|@COCKPIT_PORT@|$COCKPIT_PORT|g" \
@@ -243,77 +242,5 @@ case "$cmd" in
     $SUDO systemctl daemon-reload
     echo ">> removed: $QUADLET_FILE"
     ;;
-  firefox|virt-manager)
-    running || "$0" up
-    $PODMAN exec "$CONTAINER" gui "$cmd" "$@" ;;
-  viewer)
-    running || "$0" up
-    $PODMAN exec "$CONTAINER" gui virt-viewer "$@" ;;
-  demo)
-    running || "$0" up
-    $PODMAN exec -it "$CONTAINER" demo-vm "$@" ;;
-  virsh)  $PODMAN exec -it "$CONTAINER" virsh -c qemu:///system "$@" ;;
-  shell)  $PODMAN exec -it "$CONTAINER" bash ;;
-  logs)   $PODMAN exec "$CONTAINER" sh -c 'tail -n 50 /var/log/gui.log; journalctl --no-pager -n 30 -u virtqemud -u cockpit.socket -u gui-user' ;;
-  install-service)
-    # ログインユーザーの systemd --user サービスとして登録する。ユーザーマネージャは GNOME セッションの DISPLAY /
-    # WAYLAND_DISPLAY を持っているので gui_args がそのまま働く (root のシステムサービスだとセッション環境が無く headless になる)。
-    # Quadlet にしないのは、root の podman が必須なのにセッション環境が必要という組み合わせを .container で表現できず、
-    # up の前処理 (modprobe、シード、起動待ち) やセッションごとに変わる GUI マウントも静的なユニットに書けないため。
-    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、GNOME にログインしたユーザーとして実行してください" >&2; exit 1; }
-    user=$(id -un)
-    # サービス内では端末が無く sudo がパスワードを聞けないので、up/down に必要なコマンドだけ NOPASSWD にする
-    # root の secure_path 上の実パスにする (sudo はそのパスでコマンドを解決するため)
-    cmds=$(sudo sh -c 'for c in podman modprobe chmod mkdir ls; do command -v "$c" || { echo "!! $c が root の PATH に見つかりません" >&2; exit 1; }; done') || exit 1
-    tmp=$(mktemp)
-    printf '# kvm.sh install-service が生成: %s が kvm-container サービスから kvm.sh up/down を動かすために必要なコマンド\n%s ALL=(root) NOPASSWD: %s\n' \
-      "$user" "$user" "$(echo "$cmds" | paste -sd, - | sed 's/,/, /g')" >"$tmp"
-    sudo visudo -cf "$tmp" >/dev/null || { rm -f "$tmp"; echo "!! sudoers の検証に失敗しました" >&2; exit 1; }
-    sudo install -m 0440 -o root -g root "$tmp" "$SUDOERS_FILE"; rm -f "$tmp"
-    mkdir -p "$(dirname "$SERVICE_UNIT")"
-    cat >"$SERVICE_UNIT" <<EOF
-[Unit]
-Description=qemu-kvm / libvirt / cockpit container (kvm.sh)
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-EnvironmentFile=-%h/.config/kvm-container.conf
-ExecStart="$PWD/kvm.sh" up
-ExecStop="$PWD/kvm.sh" down
-TimeoutStartSec=30min
-TimeoutStopSec=90
-
-[Install]
-WantedBy=default.target
-EOF
-    if [ ! -e "$SERVICE_CONF" ]; then
-      cat >"$SERVICE_CONF" <<'EOF'
-# kvm-container サービス (kvm.sh up) の環境変数。KEY=VALUE 形式で、変更後は systemctl --user restart kvm-container
-#COCKPIT_BIND=127.0.0.1     # 他 PC から cockpit を開くなら 0.0.0.0
-#COCKPIT_PORT=9090
-#KVM_DATA_DIR=/path/to/data # 永続化ディレクトリ (既定: リポジトリ内の data/)
-#KVM_SOFTWARE_GL=1          # ソフトウェア描画を強制
-#TZ=Asia/Tokyo
-EOF
-    fi
-    systemctl --user daemon-reload
-    # GUI 用の変数をユーザーマネージャに取り込む (GNOME は自動で取り込むが、他のセッションや WSLg のため)
-    vars=(); for v in DISPLAY WAYLAND_DISPLAY XAUTHORITY PULSE_SERVER; do [ -n "${!v:-}" ] && vars+=("$v"); done
-    [ ${#vars[@]} -eq 0 ] || systemctl --user import-environment "${vars[@]}"
-    echo ">> installed: $SERVICE_UNIT"
-    echo ">>            $SUDOERS_FILE ($user が $(echo "$cmds" | paste -sd' ' -) をパスワード無しで sudo 可)"
-    echo ">> settings:  $SERVICE_CONF"
-    echo ">> start:     systemctl --user start kvm-container     (stop / status / restart も同様)"
-    echo ">> logs:      journalctl --user -u kvm-container"
-    ;;
-  uninstall-service)
-    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、登録したユーザーとして実行してください" >&2; exit 1; }
-    systemctl --user disable --now kvm-container.service 2>/dev/null || true   # 動いていればコンテナも down する
-    rm -f "$SERVICE_UNIT"
-    systemctl --user daemon-reload || true
-    sudo rm -f "$SUDOERS_FILE"
-    echo ">> removed: $SERVICE_UNIT, $SUDOERS_FILE ($SERVICE_CONF は残しています)"
-    ;;
-  *)      sed -n '2,20p' "$0" ;;
+  *)      sed -n '2,24p' "$0" ;;
 esac

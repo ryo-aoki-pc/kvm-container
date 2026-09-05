@@ -86,6 +86,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
 | `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` がプレースホルダを埋めて `/etc/containers/systemd/` に配置 |
+| `quadlet/user-runtime-dir.conf` | GUI ありのときにテンプレートの `[Unit]` に差し込む `Wants=` / `After=user-runtime-dir@<uid>.service` |
 
 ### 表示の仕組み
 
