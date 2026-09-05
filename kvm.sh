@@ -3,7 +3,7 @@
 # 対応ホスト: Windows + WSL2 (WSLg) / 物理 AlmaLinux 10 + GNOME (Wayland) / ディスプレイ無し (cockpit のみ)
 #   ./kvm.sh build            イメージをビルド
 #   ./kvm.sh up               コンテナを起動 (systemd 常駐、cockpit は https://localhost:9090)
-#   ./kvm.sh down             コンテナを停止・削除 (VM データは volume に残る)
+#   ./kvm.sh down             コンテナを停止・削除 (VM データはホストの KVM_DATA_DIR に残る)
 #   ./kvm.sh firefox          コンテナ内 firefox で cockpit をホスト画面に表示
 #   ./kvm.sh virt-manager     virt-manager をホスト画面に表示
 #   ./kvm.sh viewer <VM名>    virt-viewer で VM 画面をホスト画面に表示
@@ -11,12 +11,13 @@
 #   ./kvm.sh virsh ...        コンテナ内で virsh を実行
 #   ./kvm.sh shell            コンテナ内の root シェル
 #   ./kvm.sh logs             GUI アプリのログ
-#   ./kvm.sh clean            コンテナと volume を全部削除
+#   ./kvm.sh clean            コンテナと KVM_DATA_DIR のデータを全部削除 (確認あり)
 # 環境変数:
 #   KVM_HOST=auto|wsl|generic|headless  ホスト種別の自動判定を上書き
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit の公開アドレス/ポート (他 PC から開くなら 0.0.0.0)
 #   KVM_SOFTWARE_GL=1       ソフトウェア描画を強制
 #   HOST_UID / HOST_GID     コンテナ内 GUI ユーザーの uid/gid (既定: 実行ユーザー)
+#   KVM_DATA_DIR=./data     永続化用のホストディレクトリ (var-libvirt / etc-libvirt / home をバインドマウント)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -28,6 +29,8 @@ COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9090}
 HOST_UID=${HOST_UID:-$(id -u)}
 HOST_GID=${HOST_GID:-$(id -g)}
+KVM_DATA_DIR=${KVM_DATA_DIR:-$PWD/data}
+case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # 相対パスだと podman が named volume と解釈する
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -96,6 +99,17 @@ gui_args() {
 
 running() { $PODMAN container exists "$CONTAINER" 2>/dev/null && [ "$($PODMAN inspect -f '{{.State.Running}}' "$CONTAINER")" = true ]; }
 
+# 永続化用ホストディレクトリを用意する。空ならイメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーする
+# (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしてくれない)
+prepare_data_dir() {
+  local dir=$1 src=$2
+  sudo mkdir -p "$dir"
+  if [ -n "$(sudo ls -A "$dir")" ]; then return 0; fi
+  echo ">> seeding $dir from image $src"
+  # コンテナ内で cp する (podman cp だと VOLUME 宣言のあるパスは空の匿名 volume が見えてしまう)
+  $PODMAN run --rm --network none -v "$dir:/mnt/seed" "$IMAGE" cp -a "$src/." /mnt/seed/
+}
+
 cmd=${1:-help}; shift || true
 case "$cmd" in
   build)
@@ -106,14 +120,17 @@ case "$cmd" in
     $PODMAN image exists "$IMAGE" || "$0" build
     if running; then echo ">> $CONTAINER is already running"; exit 0; fi
     gui_args
+    prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
+    prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
+    prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
     $PODMAN rm -f "$CONTAINER" >/dev/null 2>&1 || true
     $PODMAN run -d --name "$CONTAINER" --hostname "$CONTAINER" \
       --privileged --systemd=always \
       --device /dev/kvm --device /dev/net/tun \
       -p "$COCKPIT_BIND:$COCKPIT_PORT:9090" \
-      -v qemu-kvm-var-libvirt:/var/lib/libvirt \
-      -v qemu-kvm-etc-libvirt:/etc/libvirt \
-      -v qemu-kvm-home:/home/admin \
+      -v "$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt" \
+      -v "$KVM_DATA_DIR/etc-libvirt:/etc/libvirt" \
+      -v "$KVM_DATA_DIR/home:/home/admin" \
       ${GUI_ARGS[@]+"${GUI_ARGS[@]}"} \
       -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
       "$IMAGE" >/dev/null
@@ -136,7 +153,13 @@ case "$cmd" in
     ;;
   down)   $PODMAN rm -f -t 10 "$CONTAINER" ;;
   clean)  $PODMAN rm -f -t 10 "$CONTAINER" 2>/dev/null || true
-          $PODMAN volume rm -f qemu-kvm-var-libvirt qemu-kvm-etc-libvirt qemu-kvm-home ;;
+          [ -d "$KVM_DATA_DIR" ] || { echo ">> $KVM_DATA_DIR はありません"; exit 0; }
+          echo ">> 削除対象: $KVM_DATA_DIR"; sudo du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
+          if [ "${KVM_CLEAN_YES:-0}" != 1 ]; then
+            read -r -p "VM のディスク/定義ごと削除します。よろしいですか? [y/N] " ans
+            [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> 中止しました"; exit 1; }
+          fi
+          sudo rm -rf "$KVM_DATA_DIR" ;;
   firefox|virt-manager)
     running || "$0" up
     $PODMAN exec "$CONTAINER" gui "$cmd" "$@" ;;

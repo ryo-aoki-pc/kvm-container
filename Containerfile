@@ -113,6 +113,5 @@ RUN chmod +x \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
 EXPOSE 9090
-VOLUME ["/var/lib/libvirt", "/etc/libvirt"]
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]
