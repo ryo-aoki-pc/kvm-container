@@ -8,16 +8,53 @@ ENV LANG=ja_JP.UTF-8 \
 
 RUN dnf -y install --setopt=install_weak_deps=False epel-release \
     && dnf -y install --setopt=install_weak_deps=False \
-        systemd dbus-daemon polkit passwd sudo shadow-utils procps-ng iproute iputils util-linux \
-        glibc-langpack-ja glibc-langpack-en \
-        qemu-kvm qemu-img swtpm edk2-ovmf \
-        libvirt libvirt-daemon-kvm libvirt-daemon-config-network libvirt-client libvirt-dbus \
-        virt-install virt-viewer \
-        cockpit cockpit-ws cockpit-bridge cockpit-system cockpit-machines cockpit-storaged \
+        # base / systemd
+        systemd \
+        dbus-daemon \
+        polkit \
+        passwd \
+        sudo \
+        shadow-utils \
+        procps-ng \
+        iproute \
+        iputils \
+        util-linux \
+        # locale
+        glibc-langpack-ja \
+        glibc-langpack-en \
+        # qemu
+        qemu-kvm \
+        qemu-img \
+        swtpm \
+        edk2-ovmf \
+        # libvirt
+        libvirt \
+        libvirt-daemon-kvm \
+        libvirt-daemon-config-network \
+        libvirt-client \
+        libvirt-dbus \
+        # virt tools
+        virt-install \
+        virt-viewer \
+        # cockpit
+        cockpit \
+        cockpit-ws \
+        cockpit-bridge \
+        cockpit-system \
+        cockpit-machines \
+        cockpit-storaged \
+        # browser
         firefox \
-        mesa-dri-drivers mesa-libEGL mesa-libGL \
-        dejavu-sans-fonts google-noto-sans-cjk-vf-fonts \
-        curl xz \
+        # mesa
+        mesa-dri-drivers \
+        mesa-libEGL \
+        mesa-libGL \
+        # fonts
+        dejavu-sans-fonts \
+        google-noto-sans-cjk-vf-fonts \
+        # misc
+        curl \
+        xz \
     # virt-manager は RHEL10 系に同梱されないため EPEL から (無ければスキップ)
     && (dnf -y install --setopt=install_weak_deps=False virt-manager || echo "virt-manager is not available, skipping") \
     && dnf clean all && rm -rf /var/cache/dnf /var/cache/libdnf5
@@ -25,7 +62,11 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
 # GUI/cockpit ログイン用の一般ユーザー (uid=1000: WSLg の runtime-dir 所有者と合わせる)
 ARG USER=admin
 ARG PASSWORD=admin
-RUN useradd -m -u 1000 -G wheel,libvirt,video,render ${USER} \
+RUN useradd -m -u 1000 ${USER} \
+    && usermod -aG wheel ${USER} \
+    && usermod -aG libvirt ${USER} \
+    && usermod -aG video ${USER} \
+    && usermod -aG render ${USER} \
     && echo "${USER}:${PASSWORD}" | chpasswd \
     && echo "${USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USER} \
     && chmod 0440 /etc/sudoers.d/${USER}
@@ -38,19 +79,33 @@ RUN sed -i \
     && sed -i 's/^#\?unix_sock_group = .*/unix_sock_group = "libvirt"/' /etc/libvirt/libvirtd.conf \
     && sed -i 's/^#\?unix_sock_rw_perms = .*/unix_sock_rw_perms = "0770"/' /etc/libvirt/libvirtd.conf
 
-COPY container/kvm-perms.service container/gui-user.service /etc/systemd/system/
+COPY container/kvm-perms.service /etc/systemd/system/
+COPY container/gui-user.service /etc/systemd/system/
 COPY container/gui-user-setup /usr/local/bin/gui-user-setup
 COPY container/gui /usr/local/bin/gui
 COPY container/demo-vm /usr/local/bin/demo-vm
 COPY container/cockpit.conf /etc/cockpit/cockpit.conf
-RUN chmod +x /usr/local/bin/gui /usr/local/bin/demo-vm /usr/local/bin/gui-user-setup \
+RUN chmod +x \
+        /usr/local/bin/gui \
+        /usr/local/bin/demo-vm \
+        /usr/local/bin/gui-user-setup \
     && ln -s /dev/null /etc/tmpfiles.d/x11.conf \
-    && systemctl enable kvm-perms.service gui-user.service \
-        virtqemud.socket virtnetworkd.socket virtstoraged.socket \
-        virtnodedevd.socket virtsecretd.socket virtlogd.socket \
+    && systemctl enable \
+        kvm-perms.service \
+        gui-user.service \
+        virtqemud.socket \
+        virtnetworkd.socket \
+        virtstoraged.socket \
+        virtnodedevd.socket \
+        virtsecretd.socket \
+        virtlogd.socket \
         cockpit.socket \
-    && systemctl mask systemd-udevd.service systemd-udevd-kernel.socket systemd-udevd-control.socket \
-        systemd-logind.service systemd-resolved.service \
+    && systemctl mask \
+        systemd-udevd.service \
+        systemd-udevd-kernel.socket \
+        systemd-udevd-control.socket \
+        systemd-logind.service \
+        systemd-resolved.service \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
 EXPOSE 9090
