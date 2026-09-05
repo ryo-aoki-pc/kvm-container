@@ -83,11 +83,9 @@ COPY container/kvm-perms.service /etc/systemd/system/
 COPY container/gui-user.service /etc/systemd/system/
 COPY container/gui-user-setup /usr/local/bin/gui-user-setup
 COPY container/gui /usr/local/bin/gui
-COPY container/demo-vm /usr/local/bin/demo-vm
 COPY container/cockpit.conf /etc/cockpit/cockpit.conf
 RUN chmod +x \
         /usr/local/bin/gui \
-        /usr/local/bin/demo-vm \
         /usr/local/bin/gui-user-setup \
     && ln -s /dev/null /etc/tmpfiles.d/x11.conf \
     && systemctl enable \

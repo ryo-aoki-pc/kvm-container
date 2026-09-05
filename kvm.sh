@@ -7,7 +7,6 @@
 #   ./kvm.sh firefox          コンテナ内 firefox で cockpit をホスト画面に表示
 #   ./kvm.sh virt-manager     virt-manager をホスト画面に表示
 #   ./kvm.sh viewer <VM名>    virt-viewer で VM 画面をホスト画面に表示
-#   ./kvm.sh demo             デモ VM (Alpine) を作成・起動して画面表示
 #   ./kvm.sh virsh ...        コンテナ内で virsh を実行
 #   ./kvm.sh shell            コンテナ内の root シェル
 #   ./kvm.sh logs             GUI アプリのログ
@@ -182,7 +181,7 @@ case "$cmd" in
         else
           echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (user: admin / pass: admin)"
         fi
-        [ ${#GUI_ARGS[@]} -gt 0 ] && echo ">> host display: ./kvm.sh firefox | ./kvm.sh demo"
+        [ ${#GUI_ARGS[@]} -gt 0 ] && echo ">> host display: ./kvm.sh firefox | ./kvm.sh virt-manager"
         exit 0
       fi
       sleep 1
@@ -205,9 +204,6 @@ case "$cmd" in
   viewer)
     running || "$0" up
     $PODMAN exec "$CONTAINER" gui virt-viewer "$@" ;;
-  demo)
-    running || "$0" up
-    $PODMAN exec -it "$CONTAINER" demo-vm "$@" ;;
   virsh)  $PODMAN exec -it "$CONTAINER" virsh -c qemu:///system "$@" ;;
   shell)  $PODMAN exec -it "$CONTAINER" bash ;;
   logs)   $PODMAN exec "$CONTAINER" sh -c 'tail -n 50 /var/log/gui.log; journalctl --no-pager -n 30 -u virtqemud -u cockpit.socket -u gui-user' ;;
@@ -323,5 +319,5 @@ case "$cmd" in
     sudo rm -f "$SUDOERS_FILE"
     echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/{virt-manager,firefox}.*, $SUDOERS_FILE"
     ;;
-  *)      sed -n '2,27p' "$0" ;;
+  *)      sed -n '2,26p' "$0" ;;
 esac
