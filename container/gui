@@ -1,0 +1,31 @@
+#!/bin/bash
+# コンテナ内で GUI アプリを admin ユーザーとしてホストのディスプレイ (Wayland/X11) に起動する
+#   gui firefox            -> cockpit を開く
+#   gui virt-manager
+#   gui virt-viewer <vm>
+# DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR / XAUTHORITY / PULSE_SERVER は kvm.sh がコンテナ起動時に渡す
+set -e
+GUI_USER=${GUI_USER:-admin}
+if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+  echo "!! GUI unavailable: the container was started without a display (headless)." >&2
+  echo "   Use cockpit in a browser instead: https://<host>:9090 (user admin)" >&2
+  exit 2
+fi
+export MOZ_ENABLE_WAYLAND=${MOZ_ENABLE_WAYLAND:-1}
+export GDK_BACKEND=${GDK_BACKEND:-wayland,x11}
+export GSETTINGS_BACKEND=${GSETTINGS_BACKEND:-keyfile}
+export LANG=${LANG:-ja_JP.UTF-8}
+[ -n "${LIBGL_ALWAYS_SOFTWARE:-}" ] && export LIBGL_ALWAYS_SOFTWARE
+
+cmd=("$@")
+if [ "${1:-}" = "firefox" ] && [ $# -eq 1 ]; then
+  cmd=(firefox --new-instance https://localhost:9090)
+fi
+if [ "${1:-}" = "virt-viewer" ]; then
+  # virt-viewer <VM名> を virt-viewer --attach --wait <VM名> に展開
+  cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
+fi
+
+exec setsid -f runuser -u "$GUI_USER" \
+  --whitelist-environment=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,XAUTHORITY,PULSE_SERVER,MOZ_ENABLE_WAYLAND,GDK_BACKEND,LIBGL_ALWAYS_SOFTWARE,GSETTINGS_BACKEND,LANG \
+  -- "${cmd[@]}" >>/var/log/gui.log 2>&1

@@ -1,0 +1,13 @@
+[Unit]
+Description=Align the GUI user's uid/gid with the host desktop user
+DefaultDependencies=no
+After=local-fs.target
+Before=cockpit.socket virtqemud.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/gui-user-setup
+
+[Install]
+WantedBy=sysinit.target

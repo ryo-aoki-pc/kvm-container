@@ -1,0 +1,30 @@
+#!/bin/bash
+# コンテナ内 GUI ユーザー (admin) の uid/gid をホストのデスクトップユーザーに合わせる
+# (ホストの /run/user/<uid> は 0700 なので、Wayland/X11 ソケットを開くには uid が一致している必要がある)
+# HOST_UID / HOST_GID は podman run -e で渡され、PID 1 (systemd) の環境からしか読めない
+set -e
+user=admin
+env_of_pid1() { tr '\0' '\n' </proc/1/environ | sed -n "s/^$1=//p"; }
+want_uid=$(env_of_pid1 HOST_UID); want_gid=$(env_of_pid1 HOST_GID)
+[ -n "$want_uid" ] || exit 0
+[ -n "$want_gid" ] || want_gid=$want_uid
+cur_uid=$(id -u "$user"); cur_gid=$(id -g "$user")
+
+if [ "$cur_gid" != "$want_gid" ]; then
+  if getent group "$want_gid" >/dev/null; then
+    echo "gui-user: $user primary group $cur_gid -> existing gid $want_gid ($(getent group "$want_gid" | cut -d: -f1))"
+    usermod -g "$want_gid" "$user"
+  else
+    echo "gui-user: group $user gid $cur_gid -> $want_gid"
+    groupmod -g "$want_gid" "$user"
+  fi
+fi
+if [ "$cur_uid" != "$want_uid" ]; then
+  if getent passwd "$want_uid" >/dev/null; then
+    echo "gui-user: ERROR uid $want_uid is already used by $(getent passwd "$want_uid" | cut -d: -f1); cannot remap $user" >&2
+    exit 1
+  fi
+  echo "gui-user: $user uid $cur_uid -> $want_uid"
+  usermod -u "$want_uid" "$user"
+fi
+chown -R "$want_uid:$want_gid" "/home/$user"

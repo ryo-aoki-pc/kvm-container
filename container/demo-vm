@@ -1,0 +1,39 @@
+#!/bin/bash
+# デモ用の VM (Alpine Linux live ISO) を作成して起動し、virt-viewer でホスト画面に表示する
+#   demo-vm            -> 作成(未作成なら) + 起動 + 表示
+#   demo-vm destroy    -> 削除
+set -euo pipefail
+NAME=${VM_NAME:-demo}
+ALPINE_VER=${ALPINE_VER:-3.22}
+ALPINE_ISO_URL=${ALPINE_ISO_URL:-https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER}/releases/x86_64/alpine-virt-${ALPINE_VER}.0-x86_64.iso}
+IMAGES=/var/lib/libvirt/images
+ISO=$IMAGES/$(basename "$ALPINE_ISO_URL")
+export LIBVIRT_DEFAULT_URI=qemu:///system
+
+if [ "${1:-}" = "destroy" ]; then
+  virsh destroy "$NAME" 2>/dev/null || true
+  virsh undefine "$NAME" --nvram --storage "$IMAGES/$NAME.qcow2" 2>/dev/null || true
+  exit 0
+fi
+
+mkdir -p "$IMAGES"
+if ! virsh dominfo "$NAME" >/dev/null 2>&1; then
+  if [ ! -s "$ISO" ]; then
+    echo ">> downloading $ALPINE_ISO_URL"
+    curl -fL --progress-bar -o "$ISO.part" "$ALPINE_ISO_URL" && mv "$ISO.part" "$ISO"
+  fi
+  echo ">> creating VM $NAME"
+  virt-install \
+    --name "$NAME" --memory 1024 --vcpus 2 \
+    --disk path="$ISO",device=cdrom --boot cdrom,hd \
+    --disk path="$IMAGES/$NAME.qcow2",size=4,format=qcow2 \
+    --osinfo alpinelinux3.20 \
+    --graphics vnc,listen=127.0.0.1 --video virtio \
+    --network network=default,model=virtio \
+    --noautoconsole --wait 0 >/dev/null
+else
+  virsh start "$NAME" 2>/dev/null || true
+fi
+echo ">> VM state: $(virsh domstate "$NAME")"
+echo ">> opening virt-viewer window on the host display"
+gui virt-viewer "$NAME"
