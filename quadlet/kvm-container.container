@@ -1,6 +1,6 @@
-# kvm-container.service の Quadlet テンプレート。kvm.sh install-service が、アットマークで囲んだ名前を
-# 実行時の環境変数の値で、UNIT_DEPS / GUI のマーカー行 (コメント行) をセッション環境から生成した行で
-# 置き換えて /etc/containers/systemd/kvm-container.container に配置する
+# Quadlet template for kvm-container.service. kvm.sh install-service replaces the names enclosed in at signs with
+# the values of the environment variables at run time, and the UNIT_DEPS / GUI marker lines (comment lines) with lines
+# generated from the session environment, then installs the result as /etc/containers/systemd/kvm-container.container
 [Unit]
 Description=qemu-kvm / libvirt / cockpit container (kvm.sh)
 # @UNIT_DEPS@
@@ -18,14 +18,14 @@ Volume=@KVM_DATA_DIR@/var-libvirt:/var/lib/libvirt
 Volume=@KVM_DATA_DIR@/etc-libvirt:/etc/libvirt
 Volume=@KVM_DATA_DIR@/home:/home/admin
 Environment=TZ=@TZ@
-# ホストのセッション環境 (install-service 実行時の値)。XAUTHORITY はコンテナ内の gui が実行時に探す
+# host session environment (values at install-service time). XAUTHORITY is found at run time by gui inside the container
 # @GUI@
 
 [Service]
-# kvm モジュールのロード、イメージの確認、データディレクトリのシード
+# load the kvm module, check the image, seed the data directories
 ExecStartPre="@KVM_SH@" prepare
 TimeoutStartSec=30min
 
-# ブート時に自動起動したい場合は以下のコメントを外す
+# uncomment the following to start automatically at boot
 #[Install]
 #WantedBy=multi-user.target

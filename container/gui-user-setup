@@ -1,7 +1,7 @@
 #!/bin/bash
-# コンテナ内 GUI ユーザー (admin) の uid/gid をホストのデスクトップユーザーに合わせる
-# (ホストの /run/user/<uid> は 0700 なので、Wayland/X11 ソケットを開くには uid が一致している必要がある)
-# HOST_UID / HOST_GID は podman run -e で渡され、PID 1 (systemd) の環境からしか読めない
+# align the uid/gid of the GUI user (admin) inside the container with the host desktop user
+# (the host's /run/user/<uid> is 0700, so the uid must match to open the Wayland/X11 sockets)
+# HOST_UID / HOST_GID are passed with podman run -e and can only be read from the environment of PID 1 (systemd)
 set -e
 user=admin
 env_of_pid1() { tr '\0' '\n' </proc/1/environ | sed -n "s/^$1=//p"; }

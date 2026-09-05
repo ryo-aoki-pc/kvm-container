@@ -1,4 +1,4 @@
-# kvm.sh install-desktop が @KVM_SH@ を kvm.sh の絶対パスで埋めて ~/.local/share/applications/ に置くテンプレート
+# template: kvm.sh install-desktop fills @KVM_SH@ with the absolute path of kvm.sh and installs this into ~/.local/share/applications/
 [Desktop Entry]
 Type=Application
 Name=Firefox

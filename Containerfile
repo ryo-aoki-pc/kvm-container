@@ -1,5 +1,5 @@
-# qemu-kvm / libvirt / cockpit / firefox を systemd で動かすコンテナ (AlmaLinux 10)
-# 想定ランタイム: podman (root, --privileged)。GUI はホストのセッション (WSLg / GNOME Wayland) に表示、無ければ cockpit のみ
+# Container that runs qemu-kvm / libvirt / cockpit / firefox under systemd (AlmaLinux 10)
+# Target runtime: podman (root, --privileged). GUI apps show on the host session (WSLg / GNOME Wayland); cockpit only when there is none
 FROM quay.io/almalinuxorg/almalinux:10
 
 ENV LANG=ja_JP.UTF-8 \
@@ -55,11 +55,11 @@ RUN dnf -y install --setopt=install_weak_deps=False epel-release \
         # misc
         curl \
         xz \
-    # virt-manager は RHEL10 系に同梱されないため EPEL から (無ければスキップ)
+    # virt-manager is not shipped with RHEL 10 derivatives, so take it from EPEL (skip if unavailable)
     && (dnf -y install --setopt=install_weak_deps=False virt-manager || echo "virt-manager is not available, skipping") \
     && dnf clean all && rm -rf /var/cache/dnf /var/cache/libdnf5
 
-# GUI/cockpit ログイン用の一般ユーザー (uid=1000: WSLg の runtime-dir 所有者と合わせる)
+# regular user for GUI apps and cockpit login (uid=1000 matches the owner of the WSLg runtime-dir)
 ARG USER=admin
 ARG PASSWORD=admin
 RUN useradd -m -u 1000 ${USER} \
@@ -71,7 +71,7 @@ RUN useradd -m -u 1000 ${USER} \
     && echo "${USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/${USER} \
     && chmod 0440 /etc/sudoers.d/${USER}
 
-# libvirt/qemu をコンテナ向けに調整
+# tune libvirt/qemu for running inside a container
 RUN sed -i \
         -e 's/^#\?security_driver = .*/security_driver = "none"/' \
         -e 's/^#\?namespaces = .*/namespaces = []/' \
@@ -98,10 +98,10 @@ RUN chmod +x \
         virtsecretd.socket \
         virtlogd.socket \
         cockpit.socket \
-    # AlmaLinux のコンテナ用ベースイメージは systemd-logind をマスクしているので明示的に解除する。
-    # cockpit のログインは pam_systemd 経由で logind セッションを作り、そのユーザーセッションバス
-    # (/run/user/<uid>/bus) を cockpit の「サービス」ページなどが開く。logind が無いとセッションバスに
-    # 接続できず、cockpit-bridge がクラッシュしてログイン後に勝手にログアウトされる
+    # AlmaLinux's container base image masks systemd-logind, so unmask it explicitly.
+    # A cockpit login creates a logind session via pam_systemd, and pages such as "Services" open the user's
+    # session bus (/run/user/<uid>/bus). Without logind that bus cannot be reached, cockpit-bridge crashes
+    # and the user is logged out right after logging in
     && systemctl unmask systemd-logind.service \
     && systemctl mask \
         systemd-udevd.service \
