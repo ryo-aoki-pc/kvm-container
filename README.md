@@ -24,7 +24,7 @@ sudo dnf install podman
 - Windows 11 (ネストした仮想化は既定で有効。無効なら `%USERPROFILE%\.wslconfig` に `[wsl2]` / `nestedVirtualization=true` を書いて `wsl --shutdown`)
 - WSL 2.5.1 以降 (cgroup v2 が既定)。`wsl --version` で確認
 - `modprobe` が無ければ `sudo dnf install kmod`。KVM モジュールは `kvm.sh up` が自動ロードします
-- `/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動きます)
+- `/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動きます)。後述の systemd サービス化を使う場合のみ必要
 
 ### 物理マシンの AlmaLinux 10 + GNOME
 
@@ -56,6 +56,8 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ./kvm.sh shell          # コンテナ内 root シェル
 ./kvm.sh down           # コンテナ停止・削除 (VM のディスク/定義はホストの data/ に残る)
 ./kvm.sh clean          # コンテナと data/ のデータをすべて削除 (確認あり)
+./kvm.sh install-service    # systemd --user サービス kvm-container として登録 (後述)
+./kvm.sh uninstall-service  # サービスの登録解除
 ```
 
 cockpit はホストのブラウザからも `https://localhost:9090` で開けます (自己署名証明書)。
@@ -112,6 +114,46 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 - `sudo podman` で動かすため、ファイルは root や qemu 所有になります。ホストから編集する場合は `sudo` を使ってください
 - コンテナは `--privileged` (SELinux ラベル分離なし) なので、SELinux が Enforcing のホストでも `:Z` などのラベル付けは不要です
 - `./kvm.sh clean` は確認のうえ `KVM_DATA_DIR` ごと削除します
+
+## systemd サービスとして起動する (GNOME ログイン後)
+
+`kvm.sh up` / `down` を、ログインユーザーの systemd (`systemctl --user`) から扱えるようにします。
+ブート時の自動起動ではなく、GNOME にログインしたあと手動で起動する使い方を想定しています。
+
+```bash
+./kvm.sh build                  # 先にイメージを作っておく
+./kvm.sh install-service        # sudo は付けない (途中でパスワードを聞かれます)
+systemctl --user start kvm-container
+systemctl --user status kvm-container
+systemctl --user stop kvm-container   # コンテナを停止・削除 (データは data/ に残る)
+journalctl --user -u kvm-container    # 起動ログ
+```
+
+- `install-service` が作るもの
+  - `~/.config/systemd/user/kvm-container.service`: `ExecStart=kvm.sh up` / `ExecStop=kvm.sh down` の oneshot ユニット
+  - `~/.config/kvm-container.conf`: サービス用の環境変数 (`COCKPIT_BIND` `COCKPIT_PORT` `KVM_DATA_DIR` など)。
+    他 PC から cockpit を開くなら `COCKPIT_BIND=0.0.0.0` を書いて `systemctl --user restart kvm-container`
+  - `/etc/sudoers.d/kvm-container`: サービス内では端末が無く sudo がパスワードを聞けないため、
+    `up` / `down` に必要な `podman` `modprobe` `chmod` `mkdir` `ls` だけをパスワード無しで sudo できるようにします
+    (`clean` は従来どおりパスワードを聞きます)
+- ユーザーサービスは GNOME セッションの `DISPLAY` / `WAYLAND_DISPLAY` を引き継ぐので、サービスで起動したコンテナでも
+  `./kvm.sh firefox` / `demo` / `viewer` によるホスト画面表示がそのまま使えます (コンテナは同じものです)
+- `enable` は勧めません。ログイン直後はセッションの環境変数が取り込まれる前で、GUI 無し (headless) で上がることがあります
+- 解除は `./kvm.sh uninstall-service` (サービスを停止し、ユニットと sudoers を削除。`~/.config/kvm-container.conf` は残ります)
+- WSL2 で使うには `/etc/wsl.conf` に `[boot]` / `systemd=true` が必要です。ただし systemd 有効時の WSLg は
+  `XDG_RUNTIME_DIR` が `/run/user/<uid>` になり中身が `/mnt/wslg` へのシンボリックリンクのため、
+  サービス経由でのホスト画面表示は未検証です (主な対象は物理 AlmaLinux 10 + GNOME)
+
+### Quadlet を使わない理由
+
+- このコンテナは `--privileged` + `/dev/kvm` + libvirt の NAT ネットワークのため **root の podman** が必須ですが、
+  GUI 表示には **ログインユーザーのセッション環境** が必要です。root の Quadlet (`/etc/containers/systemd/`) は
+  システムサービスなのでセッション環境を持たず headless になり、ユーザー Quadlet (`~/.config/containers/systemd/`) は
+  rootless podman になって動きません。「root で起動しつつユーザーセッションの環境を使う」は `.container` では表現できません
+- `up` の前処理 (kvm モジュールのロード、`/dev/kvm` の権限調整、`data/` のシード、未ビルドなら build、libvirt/cockpit の起動待ち)
+  は `[Container]` に書けず、結局 `ExecStartPre` でスクリプトを呼ぶことになります
+- Wayland/X11 ソケットや `XAUTHORITY` などの GUI 用マウントはセッションごとに値が変わるため、静的な `.container` に書けません。
+  `podman run` の引数を kvm.sh と `.container` の二か所で管理することにもなります
 
 ## 注意
 
