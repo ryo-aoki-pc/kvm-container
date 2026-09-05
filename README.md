@@ -49,7 +49,6 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ./kvm.sh build          # イメージをビルド (localhost/qemu-kvm-cockpit:latest)
 ./kvm.sh up             # コンテナ起動 (kvm モジュールのロードと /dev/kvm の権限調整も行う)
 ./kvm.sh firefox        # コンテナ内 firefox で cockpit をホスト画面に表示 (admin / admin)
-./kvm.sh demo           # デモ VM (Alpine Linux live ISO) を作成・起動して virt-viewer で表示
 ./kvm.sh virt-manager   # virt-manager をホスト画面に表示
 ./kvm.sh viewer <VM名>  # 任意の VM を virt-viewer で表示
 ./kvm.sh virsh list     # virsh
@@ -84,7 +83,6 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
 | `container/gui` | admin ユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック) |
 | `container/gui-user-setup` + `gui-user.service` | 起動時に admin の uid/gid をホストユーザーに合わせる |
-| `container/demo-vm` | Alpine ISO を取得して `virt-install` で VM を作成し virt-viewer を開く |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
 | `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` がプレースホルダを埋めて `/etc/containers/systemd/` に配置 |
@@ -142,7 +140,7 @@ journalctl -u kvm-container           # 起動ログ
   (例: `COCKPIT_BIND=0.0.0.0 ./kvm.sh install-service` → `sudo systemctl restart kvm-container`)
 - `[Service] ExecStartPre=kvm.sh prepare` で、kvm モジュールのロード、`/dev/kvm` の権限調整、`data/` のシード、
   イメージが無ければ build を root で行います。sudoers の設定は不要です
-- サービスで起動したコンテナでも `./kvm.sh firefox` / `demo` / `viewer` / `virsh` はそのまま使えます (コンテナは同じものです)。
+- サービスで起動したコンテナでも `./kvm.sh firefox` / `virt-manager` / `viewer` / `virsh` はそのまま使えます (コンテナは同じものです)。
   起動・停止は `systemctl` で行ってください (登録中は `./kvm.sh up` は案内だけ出して終了します)
 - ブート時に自動起動したい場合は `.container` 末尾のコメントを外して `[Install] WantedBy=multi-user.target` を有効にします
 - 解除は `./kvm.sh uninstall-service` (サービスを停止し `.container` を削除)
