@@ -100,11 +100,15 @@ RUN chmod +x \
         virtsecretd.socket \
         virtlogd.socket \
         cockpit.socket \
+    # AlmaLinux のコンテナ用ベースイメージは systemd-logind をマスクしているので明示的に解除する。
+    # cockpit のログインは pam_systemd 経由で logind セッションを作り、そのユーザーセッションバス
+    # (/run/user/<uid>/bus) を cockpit の「サービス」ページなどが開く。logind が無いとセッションバスに
+    # 接続できず、cockpit-bridge がクラッシュしてログイン後に勝手にログアウトされる
+    && systemctl unmask systemd-logind.service \
     && systemctl mask \
         systemd-udevd.service \
         systemd-udevd-kernel.socket \
         systemd-udevd-control.socket \
-        systemd-logind.service \
         systemd-resolved.service \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
