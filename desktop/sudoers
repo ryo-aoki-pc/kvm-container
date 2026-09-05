@@ -1,0 +1,4 @@
+# kvm.sh install-desktop が @USER@ / @PODMAN@ / @CONTAINER@ を埋めて /etc/sudoers.d/kvm-container として配置する。
+# アクティビティ (.desktop → kvm.sh launch) から起動するプロセスには端末が無くパスワードを入力できないため、
+# コンテナ内で GUI アプリを起動する固定コマンドだけをパスワード無しで許可する (引数まで完全一致、ワイルドカード無し)
+@USER@ ALL=(root) NOPASSWD: @PODMAN@ exec @CONTAINER@ gui firefox, @PODMAN@ exec @CONTAINER@ gui virt-manager

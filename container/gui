@@ -33,6 +33,10 @@ if [ "${1:-}" = "virt-viewer" ]; then
   cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
 fi
 
+# コンテナ起動直後 (アクティビティから systemctl start した直後など) は gui-user の uid 合わせや virtqemud の起動完了を待つ
+# (定常状態では即座に返る)
+timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
+
 exec setsid -f runuser -u "$GUI_USER" \
   --whitelist-environment=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,XAUTHORITY,PULSE_SERVER,MOZ_ENABLE_WAYLAND,GDK_BACKEND,LIBGL_ALWAYS_SOFTWARE,GSETTINGS_BACKEND,LANG \
   -- "${cmd[@]}" >>/var/log/gui.log 2>&1

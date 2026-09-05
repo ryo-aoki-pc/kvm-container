@@ -1,0 +1,17 @@
+# kvm.sh install-desktop が @KVM_SH@ を kvm.sh の絶対パスで埋めて ~/.local/share/applications/ に置くテンプレート
+[Desktop Entry]
+Type=Application
+Name=Virtual Machine Manager
+Name[ja]=仮想マシンマネージャー
+GenericName=Virtual machine manager
+GenericName[ja]=仮想マシンマネージャー
+Comment=Manage virtual machines in the qemu-kvm container
+Comment[ja]=qemu-kvm コンテナの仮想マシンを管理する
+TryExec=@KVM_SH@
+Exec="@KVM_SH@" launch virt-manager
+Icon=virt-manager
+Terminal=false
+StartupNotify=false
+StartupWMClass=virt-manager
+Categories=System;Emulator;GTK;
+Keywords=virtualization;libvirt;vm;vmm;qemu;kvm;仮想;

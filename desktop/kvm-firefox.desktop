@@ -1,0 +1,17 @@
+# kvm.sh install-desktop が @KVM_SH@ を kvm.sh の絶対パスで埋めて ~/.local/share/applications/ に置くテンプレート
+[Desktop Entry]
+Type=Application
+Name=Firefox
+Name[ja]=Firefox
+GenericName=Web Browser
+GenericName[ja]=ウェブブラウザー
+Comment=Firefox in the qemu-kvm container (opens cockpit)
+Comment[ja]=qemu-kvm コンテナの Firefox で cockpit (https://localhost:9090) を開く
+TryExec=@KVM_SH@
+Exec="@KVM_SH@" launch firefox
+Icon=firefox
+Terminal=false
+StartupNotify=false
+StartupWMClass=firefox
+Categories=Network;WebBrowser;
+Keywords=cockpit;browser;web;ブラウザ;

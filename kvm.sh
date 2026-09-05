@@ -16,6 +16,9 @@
 #                             (GNOME ログイン後に sudo systemctl start kvm-container で起動する用)
 #   ./kvm.sh uninstall-service  上記サービスの登録解除
 #   ./kvm.sh prepare          up の前処理だけ行う (kvm モジュール、イメージ、データディレクトリ)。Quadlet の ExecStartPre 用
+#   ./kvm.sh install-desktop  アクティビティ (アプリ一覧) から起動する .desktop / アイコン / sudoers ルールを配置
+#   ./kvm.sh uninstall-desktop  上記を削除
+#   ./kvm.sh launch <app>     .desktop 用 (firefox|virt-manager)。sudo -n で起動し、失敗はデスクトップ通知で知らせる
 # 環境変数:
 #   KVM_HOST=auto|wsl|generic|headless  ホスト種別の自動判定を上書き
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit の公開アドレス/ポート (他 PC から開くなら 0.0.0.0)
@@ -39,6 +42,10 @@ case "$KVM_DATA_DIR" in /*) ;; *) KVM_DATA_DIR=$PWD/$KVM_DATA_DIR ;; esac   # �
 QUADLET_FILE=/etc/containers/systemd/kvm-container.container   # install-service が配置する Quadlet (→ kvm-container.service)
 QUADLET_TEMPLATE=$PWD/quadlet/kvm-container.container          # そのテンプレート (@...@ と # @GUI@ / # @UNIT_DEPS@ を置き換える)
 QUADLET_DEPS=$PWD/quadlet/user-runtime-dir.conf                # # @UNIT_DEPS@ に入れる行 (GUI ありのとき)
+SUDOERS_FILE=/etc/sudoers.d/kvm-container                     # install-desktop が置く NOPASSWD ルール (launch 用)
+DESKTOP_TEMPLATE_DIR=$PWD/desktop                              # kvm-*.desktop / sudoers のテンプレート
+DESKTOP_APPS="virt-manager firefox"                            # .desktop を作るアプリ (container/gui のサブコマンド名)
+PODMAN_BIN=$(command -v podman || true)                        # sudoers に書く絶対パス。launch の sudo -n でも同じパスを使い完全一致させる
 
 is_wsl() {
   [ "$KVM_HOST" = wsl ] && return 0
@@ -106,6 +113,20 @@ gui_args() {
 }
 
 running() { $PODMAN container exists "$CONTAINER" 2>/dev/null && [ "$($PODMAN inspect -f '{{.State.Running}}' "$CONTAINER")" = true ]; }
+
+# .desktop / アイコンの配置先 (ログインユーザーの領域)。root で動く prepare (Quadlet) では使わないので必要なときだけ設定する
+desktop_dirs() {
+  DESKTOP_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/applications
+  ICON_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/icons
+}
+
+# launch (.desktop からの起動) の失敗をデスクトップ通知で知らせる。通知手段が無ければ stderr のみ
+launch_error() {
+  echo "!! $*" >&2
+  if command -v notify-send >/dev/null 2>&1; then notify-send -a kvm.sh -i dialog-error "kvm-container" "$*" 2>/dev/null || true
+  elif command -v zenity >/dev/null 2>&1; then zenity --error --title=kvm-container --text="$*" 2>/dev/null || true
+  fi
+}
 
 # 永続化用ホストディレクトリを用意する。空ならイメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーする
 # (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしてくれない)
@@ -242,5 +263,65 @@ case "$cmd" in
     $SUDO systemctl daemon-reload
     echo ">> removed: $QUADLET_FILE"
     ;;
-  *)      sed -n '2,24p' "$0" ;;
+  launch)
+    # .desktop (アクティビティ) 用。端末が無く sudo のパスワードを聞けないので、install-desktop が置いた sudoers の
+    # NOPASSWD ルールと完全一致する固定コマンド (podman exec <container> gui <app>) だけを sudo -n で実行する
+    app=${1:-}
+    case "$app" in firefox|virt-manager) ;; *) echo "usage: $0 launch firefox|virt-manager" >&2; exit 1 ;; esac
+    [ -n "$PODMAN_BIN" ] || { launch_error "podman がありません (sudo dnf install podman)"; exit 1; }
+    if [ -e "$QUADLET_FILE" ] && ! systemctl -q is-active kvm-container.service 2>/dev/null; then
+      # Quadlet 登録済みで未起動なら polkit 経由で起動する (GNOME ならパスワードダイアログが出る。ログイン後 1 回)
+      systemctl start kvm-container.service \
+        || { launch_error "kvm-container サービスを起動できませんでした。端末で sudo systemctl start kvm-container を実行してください"; exit 1; }
+    fi
+    if ! err=$(sudo -n "$PODMAN_BIN" exec "$CONTAINER" gui "$app" 2>&1); then
+      case "$err" in
+        *password*) hint="./kvm.sh install-desktop を実行してください (sudoers の NOPASSWD ルールがありません)" ;;
+        *)          hint="コンテナが起動しているか確認してください (./kvm.sh up または sudo systemctl start kvm-container)" ;;
+      esac
+      launch_error "$app を起動できませんでした: $err"$'\n'"$hint"
+      exit 1
+    fi
+    ;;
+  install-desktop)
+    # アクティビティ (アプリ一覧) から起動できるようにする: .desktop、アイコン、sudoers の NOPASSWD ルールを配置
+    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、デスクトップにログインしたユーザーとして実行してください" >&2; exit 1; }
+    [ -n "$PODMAN_BIN" ] || { echo "!! podman がありません" >&2; exit 1; }
+    desktop_dirs
+    $PODMAN image exists "$IMAGE" || "$0" build
+    # 1) sudoers: launch が使う固定コマンドだけを NOPASSWD にする。'.' を含む名前は sudo が読まないので
+    #    いったん .tmp に置き、visudo で構文を確認してから本来の名前にする
+    tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+    sed -e "s|@USER@|$(id -un)|g" -e "s|@PODMAN@|$PODMAN_BIN|g" -e "s|@CONTAINER@|$CONTAINER|g" "$DESKTOP_TEMPLATE_DIR/sudoers" >"$tmp"
+    if grep -q '@[A-Z_]*@' "$tmp"; then echo "!! テンプレートに未置換のプレースホルダがあります: $(grep -o '@[A-Z_]*@' "$tmp" | sort -u | tr '\n' ' ')" >&2; exit 1; fi
+    sudo install -m 0440 -o root -g root -D "$tmp" "$SUDOERS_FILE.tmp"
+    sudo visudo -cf "$SUDOERS_FILE.tmp" >/dev/null || { sudo rm -f "$SUDOERS_FILE.tmp"; echo "!! sudoers の構文エラー" >&2; exit 1; }
+    sudo mv -f "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
+    # 2) アイコン: イメージ内の hicolor から virt-manager / firefox のものだけ取り出す (取り出せなくても汎用アイコンで表示される)
+    mkdir -p "$ICON_DIR" "$DESKTOP_DIR"
+    (set +o pipefail
+     $PODMAN run --rm --network none "$IMAGE" sh -c \
+       'cd /usr/share/icons && find hicolor -type f \( -path "*/apps/virt-manager.*" -o -path "*/apps/firefox.*" \) | tar -cf - -T -' \
+       | tar -xf - -C "$ICON_DIR") 2>/dev/null || true
+    # 3) .desktop (virt-manager がイメージに無い (EPEL 未提供) ときはそのエントリをスキップ)
+    for app in $DESKTOP_APPS; do
+      if [ "$app" = virt-manager ] && ! $PODMAN run --rm --network none "$IMAGE" test -x /usr/bin/virt-manager; then
+        echo ">> イメージに virt-manager がありません。kvm-virt-manager.desktop はスキップします"; continue
+      fi
+      sed "s|@KVM_SH@|$PWD/kvm.sh|g" "$DESKTOP_TEMPLATE_DIR/kvm-$app.desktop" >"$DESKTOP_DIR/kvm-$app.desktop"
+      ls "$ICON_DIR"/hicolor/*/apps/"$app".* >/dev/null 2>&1 || echo ">> ($app のアイコンを取り出せませんでした。汎用アイコンで表示されます)"
+    done
+    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$DESKTOP_DIR" || true
+    echo ">> installed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/, $SUDOERS_FILE"
+    echo ">> アクティビティで「仮想マシンマネージャー」「Firefox」を検索して起動できます (コンテナは起動しておいてください。"
+    echo ">>  install-service 済みなら未起動時に systemctl start を試み、polkit のパスワードダイアログが出ます)"
+    ;;
+  uninstall-desktop)
+    [ "$(id -u)" != 0 ] || { echo "!! sudo を付けず、install-desktop したユーザーとして実行してください" >&2; exit 1; }
+    desktop_dirs
+    for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
+    sudo rm -f "$SUDOERS_FILE"
+    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/{virt-manager,firefox}.*, $SUDOERS_FILE"
+    ;;
+  *)      sed -n '2,27p' "$0" ;;
 esac
