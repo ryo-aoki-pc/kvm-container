@@ -54,8 +54,8 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ./kvm.sh viewer <VM名>  # 任意の VM を virt-viewer で表示
 ./kvm.sh virsh list     # virsh
 ./kvm.sh shell          # コンテナ内 root シェル
-./kvm.sh down           # コンテナ停止・削除 (VM のディスク/定義は volume に残る)
-./kvm.sh clean          # コンテナと volume をすべて削除
+./kvm.sh down           # コンテナ停止・削除 (VM のディスク/定義はホストの data/ に残る)
+./kvm.sh clean          # コンテナと data/ のデータをすべて削除 (確認あり)
 ```
 
 cockpit はホストのブラウザからも `https://localhost:9090` で開けます (自己署名証明書)。
@@ -69,6 +69,8 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `HOST_UID` / `HOST_GID` | 実行ユーザー | コンテナ内 GUI ユーザー admin の uid/gid |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
+| `KVM_DATA_DIR` | `./data` | 永続化用のホストディレクトリ (下記) |
+| `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
 
 ## 構成
 
@@ -95,11 +97,21 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
   `gui-user.service` が起動時にホストユーザー (`HOST_UID` / `HOST_GID`) に合わせます
 - WSL、または `/dev/dri` が無いホストではソフトウェア描画 (`LIBGL_ALWAYS_SOFTWARE=1`) を使います
 
-### 永続化 (podman volume)
+### 永続化 (ホストディレクトリのバインドマウント)
 
-- `qemu-kvm-var-libvirt` : `/var/lib/libvirt` (ディスクイメージ、ISO)
-- `qemu-kvm-etc-libvirt` : `/etc/libvirt` (VM 定義、ネットワーク定義)
-- `qemu-kvm-home` : `/home/admin` (firefox プロファイル等)
+`KVM_DATA_DIR` (既定: リポジトリ内の `data/`、git 管理外) 配下のディレクトリをコンテナにバインドマウントします。
+
+| ホスト | コンテナ | 内容 |
+| --- | --- | --- |
+| `data/var-libvirt` | `/var/lib/libvirt` | ディスクイメージ、ISO |
+| `data/etc-libvirt` | `/etc/libvirt` | VM 定義、ネットワーク定義、qemu.conf |
+| `data/home` | `/home/admin` | firefox プロファイル等 |
+
+- ディレクトリが空のときは `kvm.sh up` がイメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動します
+  (バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしないため)
+- `sudo podman` で動かすため、ファイルは root や qemu 所有になります。ホストから編集する場合は `sudo` を使ってください
+- コンテナは `--privileged` (SELinux ラベル分離なし) なので、SELinux が Enforcing のホストでも `:Z` などのラベル付けは不要です
+- `./kvm.sh clean` は確認のうえ `KVM_DATA_DIR` ごと削除します
 
 ## 注意
 
