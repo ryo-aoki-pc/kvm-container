@@ -31,7 +31,7 @@ Containerfile の unit マスク群が効いているかの実質的な回帰テ
 
 ## 構造
 
-3 層に分かれており、どの層を触るかで影響範囲が変わる。
+3 層に分かれており、どの層を触るかで影響範囲が変わる。現状実装の仕様書 (図付き) は `docs/SPEC.md`。
 
 1. **ホスト側 (`kvm.sh`, `host/wsl.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
@@ -85,6 +85,6 @@ Containerfile の unit マスク群が効いているかの実質的な回帰テ
 - **コード内のコメントと実行時メッセージは英語、README とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
 - 挙動を変えたら README の該当表・確認手順と、`kvm.sh` 冒頭のヘッダコメント (`*)` ケースが `sed -n '2,20p'` で表示する
-  usage) の両方を更新する。
+  usage) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
 - 新しいホスト依存の挙動は `host_*` フック経由で足す。新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
   README の環境変数表の 3 箇所に反映する。
