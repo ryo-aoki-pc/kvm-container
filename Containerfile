@@ -101,7 +101,10 @@ RUN chmod +x \
     # AlmaLinux's container base image masks systemd-logind, so unmask it explicitly.
     # A cockpit login creates a logind session via pam_systemd, and pages such as "Services" open the user's
     # session bus (/run/user/<uid>/bus). Without logind that bus cannot be reached, cockpit-bridge crashes
-    # and the user is logged out right after logging in
+    # and the user is logged out right after logging in.
+    # logind also owns the container's /run/user/<uid>: the GUI user lingers (gui-user-setup), so that directory and
+    # its session bus exist from boot and survive cockpit logouts. The host's runtime dir is never mounted there
+    # (kvm.sh mounts it read-only at /run/host-xdg-runtime), so logind cannot touch the host's sockets
     && systemctl unmask systemd-logind.service \
     && systemctl mask \
         systemd-udevd.service \

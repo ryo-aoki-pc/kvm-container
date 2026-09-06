@@ -3,25 +3,39 @@
 #   gui firefox            -> opens cockpit
 #   gui virt-manager
 #   gui virt-viewer <vm>
-# DISPLAY / WAYLAND_DISPLAY / XDG_RUNTIME_DIR / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts
+# DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts, as absolute paths
+# into the read-only mounts of the host session (the host's XDG_RUNTIME_DIR is mounted at HOST_RUNTIME_DIR).
+# XDG_RUNTIME_DIR is NOT the host's: the apps use the container's own /run/user/<uid>, which logind creates for the
+# lingering GUI user (see gui-user-setup)
 set -e
 # the GUI user's name is HOST_USER from PID 1's environment (set by kvm.sh); "admin" is the template user's name
 GUI_USER=${GUI_USER:-$(tr '\0' '\n' </proc/1/environ | sed -n 's/^HOST_USER=//p')}
 GUI_USER=${GUI_USER:-admin}
+GUI_UID=$(id -u "$GUI_USER")
+GUI_GID=$(id -g "$GUI_USER")
+HOST_RUNTIME_DIR=${HOST_RUNTIME_DIR:-/run/host-xdg-runtime}
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   echo "!! GUI unavailable: the container was started without a display (headless)." >&2
   echo "   Use cockpit in a browser instead: https://<host>:9090 (log in with your host user)" >&2
   exit 2
 fi
+export XDG_RUNTIME_DIR=/run/user/$GUI_UID
 export MOZ_ENABLE_WAYLAND=${MOZ_ENABLE_WAYLAND:-1}
 export GDK_BACKEND=${GDK_BACKEND:-wayland,x11}
 export GSETTINGS_BACKEND=${GSETTINGS_BACKEND:-keyfile}
 export LANG=${LANG:-ja_JP.UTF-8}
 [ -n "${LIBGL_ALWAYS_SOFTWARE:-}" ] && export LIBGL_ALWAYS_SOFTWARE
-# X11 fallback: if XAUTHORITY was not passed, look for the session's auth file
+# a Wayland socket that is gone (the host session was restarted) would only make GTK retry; drop it so that X11 is tried
+case "${WAYLAND_DISPLAY:-}" in
+  /*) if [ ! -S "$WAYLAND_DISPLAY" ]; then
+        echo "gui: Wayland socket $WAYLAND_DISPLAY not found (./kvm.sh down && ./kvm.sh up after a host re-login); trying X11" >&2
+        unset WAYLAND_DISPLAY
+      fi ;;
+esac
+# X11 fallback: if XAUTHORITY was not passed, look for the session's auth file in the host runtime dir
 # (GNOME's Xwayland uses /run/user/<uid>/.mutter-Xwaylandauth.XXXXXX, whose name changes per session; not needed for native Wayland)
-if [ -z "${XAUTHORITY:-}" ] && [ -n "${XDG_RUNTIME_DIR:-}" ]; then
-  for f in $(ls -t "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null) "$XDG_RUNTIME_DIR/Xauthority" "/home/$GUI_USER/.Xauthority"; do
+if [ -z "${XAUTHORITY:-}" ]; then
+  for f in $(ls -t "$HOST_RUNTIME_DIR"/.mutter-Xwaylandauth.* 2>/dev/null) "$HOST_RUNTIME_DIR/Xauthority" "/home/$GUI_USER/.Xauthority"; do
     [ -e "$f" ] && { export XAUTHORITY=$f; break; }
   done
 fi
@@ -38,7 +52,16 @@ fi
 # right after the container starts, wait for gui-user's uid alignment and for virtqemud
 # (returns immediately in steady state)
 timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
+# the GUI user's systemd --user instance provides /run/user/<uid> and the session bus. logind starts it at boot because
+# the user lingers; start it here as well in case logind has not got to it yet (a no-op when it is already running)
+timeout 30 systemctl start "user@$GUI_UID.service" >/dev/null 2>&1 || true
+if [ ! -d "$XDG_RUNTIME_DIR" ]; then
+  echo "gui: user@$GUI_UID.service did not provide $XDG_RUNTIME_DIR; creating it (no session bus)" >&2
+  install -d -m 700 -o "$GUI_UID" -g "$GUI_GID" "$XDG_RUNTIME_DIR"
+fi
+if [ -S "$XDG_RUNTIME_DIR/bus" ]; then export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; fi
 
-exec setsid -f runuser -u "$GUI_USER" \
-  --whitelist-environment=DISPLAY,WAYLAND_DISPLAY,XDG_RUNTIME_DIR,XAUTHORITY,PULSE_SERVER,MOZ_ENABLE_WAYLAND,GDK_BACKEND,LIBGL_ALWAYS_SOFTWARE,GSETTINGS_BACKEND,LANG \
-  -- "${cmd[@]}" >>/var/log/gui.log 2>&1
+# runuser without --login passes the whole environment on: the variables exported above plus what podman exec inherited
+# from the container's configuration. Drop the host user's secrets before the app can see them (/proc/<pid>/environ)
+unset HOST_PASSWORD_HASH HOST_USER HOST_UID HOST_GID
+exec setsid -f runuser -u "$GUI_USER" -- "${cmd[@]}" >>/var/log/gui.log 2>&1
