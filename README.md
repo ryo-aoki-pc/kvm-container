@@ -79,7 +79,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 
 | ファイル | 役割 |
 | --- | --- |
-| `Containerfile` | AlmaLinux 10 ベース。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
+| `Containerfile` | AlmaLinux 10 minimal ベース (`microdnf`)。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
 | `host/wsl.sh` | WSL2 固有の処理 (判定、`/dev/kvm` が無いときの案内、WSLg の runtime dir、ソフトウェア描画の強制)。`kvm.sh` が source し、WSL2 のときだけ既定の挙動を上書きする |
 | `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使う |

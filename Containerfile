@@ -1,63 +1,47 @@
-# Container that runs qemu-kvm / libvirt / cockpit / firefox under systemd (AlmaLinux 10)
+# Container that runs qemu-kvm / libvirt / cockpit / firefox under systemd (AlmaLinux 10 minimal)
 # Target runtime: podman (root, --privileged). GUI apps show on the host session (WSLg / GNOME Wayland); cockpit only when there is none
-FROM quay.io/almalinuxorg/almalinux:10
+# The minimal base ships microdnf instead of dnf (--setopt=install_weak_deps takes 0/1, not False/True)
+FROM quay.io/almalinuxorg/10-minimal:10
 
 ENV LANG=ja_JP.UTF-8 \
     LC_ALL=ja_JP.UTF-8 \
     container=podman
 
-RUN dnf -y install --setopt=install_weak_deps=False epel-release \
-    && dnf -y install --setopt=install_weak_deps=False \
-        # base / systemd
-        systemd \
+RUN microdnf -y install --setopt=install_weak_deps=0 epel-release \
+    # Only packages that would not otherwise be pulled in as dependencies are listed. Their deps bring the rest:
+    # libvirt-daemon-kvm -> qemu-kvm/qemu-img/edk2-ovmf/swtpm/mesa-*/util-linux..., cockpit -> cockpit-ws/-bridge/-system,
+    # cockpit-machines -> virt-install/libvirt-client..., and systemd/polkit/sudo/shadow-utils/procps-ng/iproute/curl/xz
+    # come in transitively. shadow-utils (useradd), procps-ng (sysctl), util-linux (setsid/runuser) are all present as deps.
+    && microdnf -y install --setopt=install_weak_deps=0 \
+        # base (dbus-daemon over the default dbus-broker; passwd for the cockpit password page;
+        #  procps-ng for sysctl in kvm-perms.service - it is only a weak dep of the packages below)
         dbus-daemon \
-        polkit \
         passwd \
-        sudo \
-        shadow-utils \
-        procps-ng \
-        iproute \
         iputils \
-        util-linux \
-        # locale
+        procps-ng \
+        # locale (listed explicitly so both ja and en are present, not just glibc's default langpack)
         glibc-langpack-ja \
         glibc-langpack-en \
-        # qemu
-        qemu-kvm \
-        qemu-img \
-        swtpm \
-        edk2-ovmf \
-        # libvirt
+        # libvirt + qemu (qemu-kvm/edk2-ovmf/swtpm/libvirt-client/... arrive via libvirt-daemon-kvm and cockpit-machines)
         libvirt \
         libvirt-daemon-kvm \
-        libvirt-daemon-config-network \
-        libvirt-client \
-        libvirt-dbus \
-        # virt tools
-        virt-install \
+        # virt tools (virt-install arrives via cockpit-machines)
         virt-viewer \
-        # cockpit
+        # cockpit (cockpit-ws/-bridge/-system arrive via the cockpit metapackage)
         cockpit \
-        cockpit-ws \
-        cockpit-bridge \
-        cockpit-system \
         cockpit-machines \
         cockpit-storaged \
-        # browser
+        # browser (pulls in mesa)
         firefox \
-        # mesa
-        mesa-dri-drivers \
-        mesa-libEGL \
-        mesa-libGL \
         # fonts
         dejavu-sans-fonts \
         google-noto-sans-cjk-vf-fonts \
-        # misc
-        curl \
-        xz \
+        # misc (tar for install-desktop icon extraction; not in the minimal base and not pulled by anything)
+        tar \
+        hostname \
     # virt-manager is not shipped with RHEL 10 derivatives, so take it from EPEL (skip if unavailable)
-    && (dnf -y install --setopt=install_weak_deps=False virt-manager || echo "virt-manager is not available, skipping") \
-    && dnf clean all && rm -rf /var/cache/dnf /var/cache/libdnf5
+    && (microdnf -y install --setopt=install_weak_deps=0 virt-manager || echo "virt-manager is not available, skipping") \
+    && microdnf clean all && rm -rf /var/cache/dnf
 
 # template user for GUI apps and cockpit login. At boot gui-user.service renames it to the host user and applies the
 # host user's uid/gid and password hash (see container/gui-user-setup), so no password is set here
