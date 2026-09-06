@@ -111,6 +111,10 @@ RUN chmod +x \
         systemd-udevd-kernel.socket \
         systemd-udevd-control.socket \
         systemd-resolved.service \
+    # cockpit-issue.service wants network-online.target, which pulls in NetworkManager-wait-online. NetworkManager
+    # never reports podman's eth0 as "online", so the unit times out after 60 s: the boot stays "starting" for a minute
+    # (gui waits for it before launching the first app) and ends up "degraded" with a failed unit
+        NetworkManager-wait-online.service \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
 EXPOSE 9090
