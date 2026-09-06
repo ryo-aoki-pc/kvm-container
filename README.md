@@ -51,6 +51,7 @@ sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reloa
 ```bash
 ./kvm.sh build          # イメージをビルド (localhost/qemu-kvm-cockpit:latest)
 ./kvm.sh up             # コンテナ起動 (kvm モジュールのロードと /dev/kvm の権限調整も行う)
+KVM_BRIDGE=br0 ./kvm.sh up   # VM をホストのブリッジ br0 に接続できるようにして起動 (後述「ブリッジ」)
 ./kvm.sh firefox        # コンテナ内 firefox で cockpit をホスト画面に表示 (ホストのユーザー名・パスワードでログイン)
 ./kvm.sh virt-manager   # virt-manager をホスト画面に表示
 ./kvm.sh viewer <VM名>  # 任意の VM を virt-viewer で表示
@@ -74,6 +75,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
+| `KVM_BRIDGE` | 未設定 | ホストの既存ブリッジ名 (例 `br0`)。libvirt ネットワーク `bridged` として登録し、VM をホストと同じセグメントに接続できる (後述) |
 
 ## 構成
 
@@ -86,6 +88,8 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせ、linger を有効にする |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
 | `container/cockpit.conf` | cockpit-ws の設定 |
+| `container/cockpit-listen-generator` | systemd generator。`COCKPIT_BIND` / `COCKPIT_PORT` を cockpit.socket の listen アドレスに反映する (コンテナはホストのネットワーク名前空間で動くため `-p` は使えない) |
+| `container/kvm-net-teardown.service` | コンテナ停止時に libvirt のネットワークを `net-destroy` し、ホスト側に `virbr0` などを残さない |
 | `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
 
 ### 表示の仕組み
@@ -154,9 +158,53 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 - WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映しますが、未検証です
 - 解除は `./kvm.sh uninstall-desktop` (`.desktop` とアイコンを削除)
 
+## ブリッジ (ホストと同じセグメントの IP を VM に割り当てる)
+
+コンテナは `--network host` で起動し、ホストのネットワーク名前空間を共有します。これにより libvirt はホスト上のブリッジに
+VM の tap を直接つなげます。`KVM_BRIDGE=<ブリッジ名>` を付けて `up` すると、そのブリッジが libvirt ネットワーク `bridged`
+(`<forward mode="bridge"/>`) として登録され、VM 作成時に選べるようになります (定義は `data/etc-libvirt` に永続化され、
+`KVM_BRIDGE` を付けずに `up` すると削除されます)。
+
+```bash
+KVM_BRIDGE=br0 ./kvm.sh up
+./kvm.sh virsh net-list                                   # bridged が active
+# cockpit / virt-manager の VM 作成画面でネットワークに「bridged」を選ぶ。virt-install なら:
+sudo podman exec kvm virt-install ... --network network=bridged ...
+```
+
+ブリッジ自体はホスト側で事前に作っておきます (`kvm.sh` はホストのネットワーク設定を変更しません)。
+
+### 物理 AlmaLinux 10 + GNOME (NetworkManager)
+
+物理 NIC (例 `enp1s0`) をブリッジ `br0` に収容し、IP はブリッジ側に持たせます。VM はホストと同じ LAN の DHCP から IP を受け取ります。
+
+```bash
+sudo nmcli connection add type bridge ifname br0 con-name br0 ipv4.method auto
+sudo nmcli connection add type bridge-slave ifname enp1s0 master br0
+sudo nmcli connection down "$(nmcli -g NAME,DEVICE connection show --active | awk -F: '$2=="enp1s0"{print $1}')"
+sudo nmcli connection up br0
+KVM_BRIDGE=br0 ./kvm.sh up
+```
+
+### Windows + WSL2 では使えません
+
+WSL2 の Hyper-V 仮想スイッチは、WSL の仮想 NIC 以外の MAC アドレスから送られたフレームを破棄します (MAC アドレススプーフィング不可)。
+検証: eth0 上に別 MAC の macvlan を作って別の名前空間に置くと、Windows からの ARP 要求は届くのに応答が Windows に届かず、
+ゲートウェイ (172.25.32.1) への ARP も失敗しました。ブリッジや macvtap で VM 自身の MAC を使う構成は WSL2 では通信できないため、
+WSL2 では従来どおり `default` (NAT, 192.168.122.0/24) を使ってください。なお、WSL の eth0 のセグメント自体が Windows 側の
+NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
+
+### 注意 (ホストのネットワーク名前空間を共有することによる影響)
+
+- libvirt の `default` ネットワークの `virbr0`・dnsmasq・nftables ルールはホスト上に作られます。`net.ipv4.ip_forward=1` もホストに効きます
+- ホスト自身で libvirt を動かしていると `virbr0` / 192.168.122.0/24 が衝突します。`up` 時にホストに `virbr0` があると警告します
+  (コンテナの異常終了で残った場合は `sudo ip link del virbr0` で削除)
+- cockpit はホストの `COCKPIT_BIND:COCKPIT_PORT` で直接 listen します。ホストで 9090 番を使っているものがあると起動しません
+- コンテナ内の NetworkManager はマスクしています (ホストの NIC を管理し始めてしまうため)。cockpit の「ネットワーク」ページは使えません
+
 ## 注意
 
-- コンテナは `--privileged` で起動します (libvirt の default ネットワーク (NAT/dnsmasq) と KVM のため)。
+- コンテナは `--privileged --network host` で起動します (KVM、libvirt の default ネットワーク (NAT/dnsmasq)、ホストのブリッジへの接続のため)。
 - GNOME からログアウト/再ログインすると `/run/user/<uid>` が作り直されるため、`./kvm.sh down` → `./kvm.sh up` してください。
   ホスト側の `DISPLAY` 等を変えた場合も同様です。
 - RHEL 10 系の qemu-kvm には SPICE がないため、グラフィックスは VNC を使っています。

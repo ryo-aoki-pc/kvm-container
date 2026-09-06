@@ -68,13 +68,17 @@ COPY container/gui-user.service /etc/systemd/system/
 COPY container/gui-user-setup /usr/local/bin/gui-user-setup
 COPY container/gui /usr/local/bin/gui
 COPY container/cockpit.conf /etc/cockpit/cockpit.conf
+COPY container/kvm-net-teardown.service /etc/systemd/system/
+COPY container/cockpit-listen-generator /usr/lib/systemd/system-generators/cockpit-listen
 RUN chmod +x \
         /usr/local/bin/gui \
         /usr/local/bin/gui-user-setup \
+        /usr/lib/systemd/system-generators/cockpit-listen \
     && ln -s /dev/null /etc/tmpfiles.d/x11.conf \
     && systemctl enable \
         kvm-perms.service \
         gui-user.service \
+        kvm-net-teardown.service \
         virtqemud.socket \
         virtnetworkd.socket \
         virtstoraged.socket \
@@ -99,6 +103,9 @@ RUN chmod +x \
     # never reports podman's eth0 as "online", so the unit times out after 60 s: the boot stays "starting" for a minute
     # (gui waits for it before launching the first app) and ends up "degraded" with a failed unit
         NetworkManager-wait-online.service \
+    # the container shares the host's network namespace (--network host, so that VMs can be bridged onto the host's
+    # segment); NetworkManager would otherwise start managing the host's interfaces and bridges
+        NetworkManager.service \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
 EXPOSE 9090

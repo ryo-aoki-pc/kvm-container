@@ -17,6 +17,8 @@
 # Environment variables:
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
+#   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
+#                           (the bridge must already exist on the host; see README)
 #   KVM_SOFTWARE_GL=1       force software rendering
 # WSL2-specific behaviour (detection, WSLg runtime dir, /dev/kvm hint, software rendering) lives in host/wsl.sh
 set -euo pipefail
@@ -28,6 +30,7 @@ PODMAN="sudo podman"
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9090}
+KVM_BRIDGE=${KVM_BRIDGE:-}             # host bridge for VMs on the host's segment (libvirt network "bridged"); empty = NAT only
 HOST_USER=$(id -un)                    # the container's GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
@@ -167,6 +170,42 @@ gui_args() {
 
 running() { $PODMAN container exists "$CONTAINER" 2>/dev/null && [ "$($PODMAN inspect -f '{{.State.Running}}' "$CONTAINER")" = true ]; }
 
+virsh_in() { $PODMAN exec "$CONTAINER" virsh -c qemu:///system "$@"; }
+
+# the container shares the host's network namespace (--network host): libvirt's bridges (virbr0), dnsmasq and nftables
+# rules are created on the host, and VMs can be attached to a host bridge. Checks before starting
+check_host_network() {
+  if [ -n "$KVM_BRIDGE" ] && [ ! -d "/sys/class/net/$KVM_BRIDGE/bridge" ]; then
+    echo "!! KVM_BRIDGE=$KVM_BRIDGE is not a bridge on this host. Create it first (see README: ブリッジ)" >&2
+    exit 1
+  fi
+  if [ -e /sys/class/net/virbr0 ]; then
+    echo "!! virbr0 already exists on the host (a libvirt running on the host, or a leftover from a crashed container)." >&2
+    echo "   The container's default network will fail to start; remove it if it is a leftover: sudo ip link del virbr0" >&2
+  fi
+}
+
+# register the host bridge as the libvirt network "bridged" (persisted in data/etc-libvirt), or drop it when KVM_BRIDGE is unset
+sync_bridged_network() {
+  local defined active
+  defined=$(virsh_in net-list --all --name | grep -cx bridged || true)
+  if [ -z "$KVM_BRIDGE" ]; then
+    if [ "$defined" != 0 ]; then
+      echo ">> KVM_BRIDGE is not set: removing the libvirt network \"bridged\""
+      virsh_in net-destroy bridged >/dev/null 2>&1 || true
+      virsh_in net-undefine bridged >/dev/null
+    fi
+    return 0
+  fi
+  active=$(virsh_in net-list --name | grep -cx bridged || true)
+  [ "$active" = 0 ] || virsh_in net-destroy bridged >/dev/null
+  printf '<network>\n  <name>bridged</name>\n  <forward mode="bridge"/>\n  <bridge name="%s"/>\n</network>\n' "$KVM_BRIDGE" \
+    | $PODMAN exec -i "$CONTAINER" virsh -c qemu:///system net-define /dev/stdin >/dev/null
+  virsh_in net-autostart bridged >/dev/null
+  virsh_in net-start bridged >/dev/null
+  echo ">> libvirt network \"bridged\" -> host bridge $KVM_BRIDGE (choose it when creating a VM, or virt-install --network network=bridged)"
+}
+
 # where .desktop files / icons go (the login user's area)
 desktop_dirs() {
   DESKTOP_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/applications
@@ -211,11 +250,14 @@ case "$cmd" in
     if running; then echo ">> $CONTAINER is already running"; exit 0; fi
     host_user_args
     gui_args
+    check_host_network
     $PODMAN rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    # --network host: VMs can be bridged onto the host's segment. cockpit then listens on the host directly, so its
+    # bind address/port is passed to the container (cockpit-listen generator) instead of using podman's -p
     $PODMAN run -d --name "$CONTAINER" --hostname "$CONTAINER" \
-      --privileged --systemd=always \
+      --privileged --systemd=always --network host \
       --device /dev/kvm --device /dev/net/tun \
-      -p "$COCKPIT_BIND:$COCKPIT_PORT:9090" \
+      -e "COCKPIT_LISTEN=$COCKPIT_BIND:$COCKPIT_PORT" \
       -v "$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt" \
       -v "$KVM_DATA_DIR/etc-libvirt:/etc/libvirt" \
       -v "$KVM_DATA_DIR/home:/home/$HOST_USER" \
@@ -226,6 +268,7 @@ case "$cmd" in
     echo ">> waiting for libvirt/cockpit..."
     for i in $(seq 1 30); do
       if $PODMAN exec "$CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1'; then
+        sync_bridged_network
         if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
           echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
           echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reload"
