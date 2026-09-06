@@ -79,7 +79,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 
 | ファイル | 役割 |
 | --- | --- |
-| `Containerfile` | AlmaLinux 10 ベース。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
+| `Containerfile` | AlmaLinux 10 minimal ベース (`microdnf`)。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
 | `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使う |
 | `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせ、linger を有効にする |
