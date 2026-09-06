@@ -1,0 +1,18 @@
+[Unit]
+Description=Destroy libvirt networks at shutdown (they live in the host network namespace)
+# With --network host, libvirt's virbr0, dnsmasq and nftables rules are created on the host. dnsmasq dies with the
+# container, but a leftover virbr0 makes the next start of the "default" network fail with "File exists", so tear the
+# networks down through libvirt while its daemons are still running: this unit is stopped before them (reverse of After=).
+# If a daemon has already idle-exited, socket activation is refused during shutdown, hence the ip link fallback
+After=virtnetworkd.service virtqemud.service virtnetworkd.socket virtqemud.socket
+Wants=virtnetworkd.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/bin/sh -c 'for n in $(virsh -c qemu:///system net-list --name 2>/dev/null); do virsh -c qemu:///system net-destroy "$n"; done; for b in /sys/class/net/virbr*; do [ -e "$b" ] && ip link del "$(basename "$b")"; done; true'
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
