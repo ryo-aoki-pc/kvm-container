@@ -106,8 +106,13 @@ RUN chmod +x \
     # the container shares the host's network namespace (--network host, so that VMs can be bridged onto the host's
     # segment); NetworkManager would otherwise start managing the host's interfaces and bridges
         NetworkManager.service \
+    # iscsi-initiator-utils comes in via cockpit-storaged / libvirt's iSCSI storage driver. Its sockets listen in the
+    # ABSTRACT unix namespace, which belongs to the network namespace: with --network host they collide with the host's
+    # iscsid ("Address already in use") and leave the boot "degraded". iSCSI is not used by this container
+        iscsid.socket \
+        iscsiuio.socket \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
 
-EXPOSE 9090
+EXPOSE 9091
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

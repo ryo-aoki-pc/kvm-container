@@ -16,7 +16,7 @@ GUI_GID=$(id -g "$GUI_USER")
 HOST_RUNTIME_DIR=${HOST_RUNTIME_DIR:-/run/host-xdg-runtime}
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   echo "!! GUI unavailable: the container was started without a display (headless)." >&2
-  echo "   Use cockpit in a browser instead: https://<host>:9090 (log in with your host user)" >&2
+  echo "   Use cockpit in a browser instead: https://<host>:<COCKPIT_PORT> (log in with your host user)" >&2
   exit 2
 fi
 export XDG_RUNTIME_DIR=/run/user/$GUI_UID
@@ -42,7 +42,11 @@ fi
 
 cmd=("$@")
 if [ "${1:-}" = "firefox" ] && [ $# -eq 1 ]; then
-  cmd=(firefox --new-instance https://localhost:9090)
+  # cockpit's port comes from kvm.sh as COCKPIT_LISTEN=<bind>:<port> in PID 1's environment (COCKPIT_BIND/COCKPIT_PORT).
+  # Always connect to localhost: the bind address may be 0.0.0.0 or ::
+  cockpit_port=$(tr '\0' '\n' </proc/1/environ | sed -n 's/^COCKPIT_LISTEN=//p')
+  cockpit_port=${cockpit_port##*:}
+  cmd=(firefox --new-instance "https://localhost:${cockpit_port:-9091}")
 fi
 if [ "${1:-}" = "virt-viewer" ]; then
   # expand virt-viewer <vm> to virt-viewer --attach --wait <vm>
