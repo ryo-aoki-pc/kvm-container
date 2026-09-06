@@ -1,12 +1,13 @@
 #!/bin/sh
 # systemd generator: make cockpit.socket listen on the address/port given by kvm.sh.
 # The container runs with --network host, so cockpit-ws binds directly on the host; podman's -p cannot be used.
-# kvm.sh passes COCKPIT_LISTEN=<bind>:<port> (from COCKPIT_BIND / COCKPIT_PORT) in PID 1's environment; the default
-# keeps the previous behaviour of exposing cockpit on localhost only
+# kvm.sh passes COCKPIT_LISTEN=<bind>:<port> (from COCKPIT_BIND / COCKPIT_PORT) in PID 1's environment; the fallback
+# below only applies when the container is started without it, and matches kvm.sh's defaults (localhost, port 9091 -
+# not cockpit's usual 9090, which the host's own cockpit-ws normally occupies)
 set -e
 dir=$1                                   # "normal" generator output directory
 listen=$(tr '\0' '\n' </proc/1/environ | sed -n 's/^COCKPIT_LISTEN=//p')
-[ -n "$listen" ] || listen=127.0.0.1:9090
+[ -n "$listen" ] || listen=127.0.0.1:9091
 bind=${listen%:*}; port=${listen##*:}
 case "$bind" in
   \[*\]) ;;                              # already bracketed

@@ -35,15 +35,20 @@ VM のディスクや定義はその中の `data/` に置かれます。
 - SELinux は Enforcing のままで構いません (`--privileged` のためラベル分離は無効)
 - **GNOME にログインした状態のターミナルから** `kvm.sh` を実行してください。
   `DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` を元にコンテナへ表示先を渡します (仕組みは後述)
+- コンテナの cockpit は **9091 番**を使います。AlmaLinux 10 は `cockpit-ws` が入っていて `cockpit.socket` が既定で
+  有効なことが多く、コンテナは `--network host` なので、cockpit 本来の 9090 番だとホスト側と衝突するためです。
+  ホスト側の cockpit を使わないなら `sudo systemctl disable --now cockpit.socket` で止めても構いません
+  (どちらにせよ、使うポートが埋まっていれば `up` 時に検出して中止します)
 
 ### ディスプレイの無いホスト
 
 ```bash
 COCKPIT_BIND=0.0.0.0 ./kvm.sh up
-sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reload
+sudo firewall-cmd --add-port=9091/tcp --permanent && sudo firewall-cmd --reload
 ```
 
-別 PC のブラウザで `https://<ホスト名>:9090` を開き、`kvm.sh up` を実行したホストユーザーの名前とパスワードでログインします。
+別 PC のブラウザで `https://<ホスト名>:9091` を開き、`kvm.sh up` を実行したホストユーザーの名前とパスワードでログインします。
+(firewalld の `cockpit` サービスは 9090 番固定なので、既定の 9091 番では `--add-port` を使います)
 「仮想マシン」ページ (cockpit-machines) で VM の作成とコンソール表示ができます。
 
 ## 使い方
@@ -63,7 +68,7 @@ KVM_BRIDGE=br0 ./kvm.sh up   # VM をホストのブリッジ br0 に接続で�
 ./kvm.sh uninstall-desktop  # 上記の解除
 ```
 
-cockpit はホストのブラウザからも `https://localhost:9090` で開けます (自己署名証明書)。
+cockpit はホストのブラウザからも `https://localhost:9091` で開けます (自己署名証明書。警告が出たら「危険性を承知で続行」)。
 ログインは `kvm.sh up` を実行したホストユーザーの名前とパスワードです (コンテナ内のユーザーをホストユーザーに合わせています。後述)。
 
 環境変数:
@@ -71,7 +76,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
 | `KVM_HOST` | `auto` | `wsl` / `generic` / `headless` で判定を上書き (判定は `host/wsl.sh`) |
-| `COCKPIT_BIND` / `COCKPIT_PORT` | `127.0.0.1` / `9090` | cockpit の公開アドレスとポート |
+| `COCKPIT_BIND` / `COCKPIT_PORT` | `127.0.0.1` / `9091` | cockpit の公開アドレスとポート (9090 ではないのはホストの cockpit を避けるため) |
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
@@ -150,7 +155,7 @@ GNOME のアクティビティで「仮想マシンマネージャー」「Firef
 
 - アクティビティから起動したプロセスには端末が無く sudo のパスワードを入力できないため、`kvm.sh launch` は `sudo -n podman exec kvm gui <app>` を実行します。
   実行ユーザーがパスワード無しで `sudo podman` を実行できるように、sudoers を事前に設定しておいてください
-- Firefox のエントリは `./kvm.sh firefox` と同じく cockpit (`https://localhost:9090`) を開きます
+- Firefox のエントリは `./kvm.sh firefox` と同じく cockpit (`https://localhost:9091`) を開きます
 - コンテナが起動していないときは、通知で `./kvm.sh up` を案内します
 - 起動直後は、コンテナ内の `gui` が systemd の起動完了 (ユーザーの同期、virtqemud) を待ってからアプリを起動します
 - リポジトリを移動したら `./kvm.sh install-desktop` を再実行してください (`.desktop` は絶対パスです。`TryExec` により古いパスのエントリは自動で非表示になります)
@@ -199,7 +204,11 @@ NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
 - libvirt の `default` ネットワークの `virbr0`・dnsmasq・nftables ルールはホスト上に作られます。`net.ipv4.ip_forward=1` もホストに効きます
 - ホスト自身で libvirt を動かしていると `virbr0` / 192.168.122.0/24 が衝突します。`up` 時にホストに `virbr0` があると警告します
   (コンテナの異常終了で残った場合は `sudo ip link del virbr0` で削除)
-- cockpit はホストの `COCKPIT_BIND:COCKPIT_PORT` で直接 listen します。ホストで 9090 番を使っているものがあると起動しません
+- cockpit はホストの `COCKPIT_BIND:COCKPIT_PORT` で直接 listen します。ホストで同じポートを使っているものがあると起動しないため、
+  `up` 時に検出して中止します。既定を 9090 ではなく **9091** にしているのはこのためで、AlmaLinux 10 ではホスト自身の
+  `cockpit.socket` が 9090 番を使っていることが多いためです
+- コンテナ内の `iscsid.socket` / `iscsiuio.socket` はマスクしています。これらは **abstract** な unix ソケットを使い、
+  abstract 名前空間はネットワーク名前空間に属するため、ホストの `iscsid` と衝突して起動が degraded になります
 - コンテナ内の NetworkManager はマスクしています (ホストの NIC を管理し始めてしまうため)。cockpit の「ネットワーク」ページは使えません
 
 ## 注意
@@ -217,9 +226,12 @@ NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
 ```bash
 getenforce                                            # Enforcing のままで可
 env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
-./kvm.sh up && ./kvm.sh firefox
+ss -ltn | grep 9091                                    # 何も出ないこと (出るなら COCKPIT_PORT を変える)
+./kvm.sh up && ./kvm.sh firefox                        # 自己署名証明書の警告が出たら「危険性を承知で続行」
+sudo podman exec kvm systemctl is-system-running       # running (degraded ではない)
 sudo podman exec kvm ls -la /dev/dri                  # renderD* が 0666
 sudo ausearch -m avc -ts recent                        # SELinux 拒否が無いこと
+./kvm.sh virt-manager                                  # GNOME デスクトップにウィンドウが出ること
 ```
 
 ### Windows + WSL2 での確認手順

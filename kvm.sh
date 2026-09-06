@@ -2,7 +2,7 @@
 # Helper script for the qemu-kvm/libvirt/cockpit/firefox container (AlmaLinux 10)
 # Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (cockpit only)
 #   ./kvm.sh build            build the image
-#   ./kvm.sh up               start the container (systemd inside; cockpit at https://localhost:9090, log in with your host user)
+#   ./kvm.sh up               start the container (systemd inside; cockpit at https://localhost:9091, log in with your host user)
 #   ./kvm.sh down             stop and remove the container (VM data stays in data/ under the repository)
 #   ./kvm.sh firefox          open cockpit in the container's firefox on the host display
 #   ./kvm.sh virt-manager     show virt-manager on the host display
@@ -16,7 +16,7 @@
 #   ./kvm.sh launch <app>     used by the .desktop entries (firefox|virt-manager): runs via sudo -n, reports failures as desktop notifications
 # Environment variables:
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
-#   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
+#   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9091  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see README)
 #   KVM_SOFTWARE_GL=1       force software rendering
@@ -29,7 +29,7 @@ CONTAINER=kvm                 # not NAME: WSL uses NAME for the hostname
 PODMAN="sudo podman"
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
-COCKPIT_PORT=${COCKPIT_PORT:-9090}
+COCKPIT_PORT=${COCKPIT_PORT:-9091}     # not cockpit's usual 9090: the host often runs its own cockpit there (see check_host_network)
 KVM_BRIDGE=${KVM_BRIDGE:-}             # host bridge for VMs on the host's segment (libvirt network "bridged"); empty = NAT only
 HOST_USER=$(id -un)                    # the container's GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
 HOST_UID=$(id -u)
@@ -183,6 +183,13 @@ check_host_network() {
     echo "!! virbr0 already exists on the host (a libvirt running on the host, or a leftover from a crashed container)." >&2
     echo "   The container's default network will fail to start; remove it if it is a leftover: sudo ip link del virbr0" >&2
   fi
+  # cockpit-ws binds on the host itself, so anything already listening on that port makes the container's
+  # cockpit.socket fail with "Address already in use". The default is 9091 to stay clear of the host's own cockpit
+  if command -v ss >/dev/null 2>&1 && [ -n "$(ss -H -ltn "sport = :$COCKPIT_PORT" 2>/dev/null)" ]; then
+    echo "!! port $COCKPIT_PORT is already in use on the host, so the container's cockpit cannot start." >&2
+    echo "   Free the port, or pick another one: COCKPIT_PORT=9092 ./kvm.sh up" >&2
+    exit 1
+  fi
 }
 
 # register the host bridge as the libvirt network "bridged" (persisted in data/etc-libvirt), or drop it when KVM_BRIDGE is unset
@@ -227,8 +234,10 @@ prepare_data_dir() {
   sudo mkdir -p "$dir"
   if [ -n "$(sudo ls -A "$dir")" ]; then return 0; fi
   echo ">> seeding $dir from image $src"
-  # cp inside a container (with podman cp, paths declared as VOLUME show up as empty anonymous volumes)
-  $PODMAN run --rm --network none -v "$dir:/mnt/seed" "$IMAGE" cp -a "$src/." /mnt/seed/
+  # cp inside a container (with podman cp, paths declared as VOLUME show up as empty anonymous volumes).
+  # label=disable: the data directories live under the user's home (user_home_t) and are only ever used by the
+  # --privileged main container, so they are not relabelled; without this, SELinux denies the write on Enforcing hosts
+  $PODMAN run --rm --network none --security-opt label=disable -v "$dir:/mnt/seed" "$IMAGE" cp -a "$src/." /mnt/seed/
 }
 
 # preparation for up: kvm module, image, data directories
@@ -271,7 +280,7 @@ case "$cmd" in
         sync_bridged_network
         if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
           echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
-          echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-service=cockpit --permanent && sudo firewall-cmd --reload"
+          echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-port=$COCKPIT_PORT/tcp --permanent && sudo firewall-cmd --reload"
         else
           echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
         fi
