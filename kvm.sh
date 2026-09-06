@@ -18,6 +18,7 @@
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9090  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
 #   KVM_SOFTWARE_GL=1       force software rendering
+# WSL2-specific behaviour (detection, WSLg runtime dir, /dev/kvm hint, software rendering) lives in host/wsl.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -35,11 +36,13 @@ HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mou
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-manager firefox"    # apps that get a .desktop entry (subcommand names of container/gui)
 
-is_wsl() {
-  [ "$KVM_HOST" = wsl ] && return 0
-  [ "$KVM_HOST" != auto ] && return 1
-  [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
+# host-specific behaviour: generic defaults here; host/wsl.sh overrides them when running on WSL2
+host_kvm_missing_hint() {   # /dev/kvm is still missing after modprobe
+  echo "!! /dev/kvm not found. Enable SVM (AMD) / VT-x (Intel) in the firmware and check sudo modprobe kvm_amd or kvm_intel" >&2
 }
+host_default_runtime_dir() { :; }   # runtime dir to use when XDG_RUNTIME_DIR is not set (none by default)
+host_force_software_gl() { [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; }   # no GPU, or forced by the user
+. "$PWD/host/wsl.sh"
 
 ensure_kvm() {
   if [ ! -e /dev/kvm ]; then
@@ -48,11 +51,7 @@ ensure_kvm() {
     if grep -q AuthenticAMD /proc/cpuinfo; then sudo modprobe kvm_amd; else sudo modprobe kvm_intel; fi
   fi
   if [ ! -e /dev/kvm ]; then
-    if is_wsl; then
-      echo "!! /dev/kvm not found. Set [wsl2] nestedVirtualization=true in %USERPROFILE%\\.wslconfig on the Windows side and run wsl --shutdown" >&2
-    else
-      echo "!! /dev/kvm not found. Enable SVM (AMD) / VT-x (Intel) in the firmware and check sudo modprobe kvm_amd or kvm_intel" >&2
-    fi
+    host_kvm_missing_hint
     exit 1
   fi
   sudo chmod 666 /dev/kvm
@@ -120,8 +119,7 @@ gui_args() {
     echo ">> no display found: GUI disabled, use cockpit in a browser"
     return 0
   fi
-  HOST_RT=${XDG_RUNTIME_DIR:-}
-  if [ -z "$HOST_RT" ] && is_wsl; then HOST_RT=/mnt/wslg/runtime-dir; fi
+  HOST_RT=${XDG_RUNTIME_DIR:-$(host_default_runtime_dir)}
   if [ ! -d "$HOST_RT" ]; then
     echo "!! XDG_RUNTIME_DIR ($HOST_RT) does not exist. Run this from a terminal inside a desktop session" >&2
     exit 1
@@ -162,7 +160,7 @@ gui_args() {
             fi ;;
   esac
   if [ -n "$pulse" ]; then GUI_ARGS+=(-e "PULSE_SERVER=$pulse"); fi
-  if is_wsl || [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; then
+  if host_force_software_gl; then
     GUI_ARGS+=(-e LIBGL_ALWAYS_SOFTWARE=1)
   fi
 }

@@ -69,7 +69,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
-| `KVM_HOST` | `auto` | `wsl` / `generic` / `headless` で判定を上書き |
+| `KVM_HOST` | `auto` | `wsl` / `generic` / `headless` で判定を上書き (判定は `host/wsl.sh`) |
 | `COCKPIT_BIND` / `COCKPIT_PORT` | `127.0.0.1` / `9090` | cockpit の公開アドレスとポート |
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
@@ -81,6 +81,7 @@ cockpit はホストのブラウザからも `https://localhost:9090` で開け�
 | --- | --- |
 | `Containerfile` | AlmaLinux 10 ベース。EPEL から virt-manager を追加。systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
+| `host/wsl.sh` | WSL2 固有の処理 (判定、`/dev/kvm` が無いときの案内、WSLg の runtime dir、ソフトウェア描画の強制)。`kvm.sh` が source し、WSL2 のときだけ既定の挙動を上書きする |
 | `container/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使う |
 | `container/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせ、linger を有効にする |
 | `container/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` `/dev/dri/renderD*` の権限調整と ip_forward 有効化 |
