@@ -228,8 +228,8 @@ flowchart TB
     tmpl["desktop/kvm-virt-manager.desktop / kvm-firefox.desktop (テンプレート)"]
   end
   subgraph L2 ["層 2: イメージ (Containerfile、1 ファイルのマルチステージ)"]
-    base["base: 10-minimal + systemd / dbus-daemon / hostname / locale<br/>libvirt グループを gid 985 で固定、両イメージ共通の unit マスク"]
-    common["common: shadow-utils、テンプレートユーザー admin (wheel, libvirt)<br/>gui-user.service、systemd-logind の unmask"]
+    base["base: 10-minimal + shadow-utils / systemd / dbus-daemon / hostname / locale<br/>libvirt グループを gid 985 で固定、両イメージ共通の unit マスク"]
+    common["common: テンプレートユーザー admin (wheel, libvirt)<br/>gui-user.service、systemd-logind の unmask"]
     kvmimg["kvm (--target kvm → localhost/kvm-container/kvm)<br/>libvirt / qemu-kvm / virt-install / cockpit、sudoers、libvirtdbus を libvirt グループへ"]
     guiimg["gui (--target gui → localhost/kvm-container/gui)<br/>EPEL、firefox / virt-viewer / virt-manager / libvirt-client、フォント、video / render グループ"]
     base --> common
@@ -309,10 +309,10 @@ flowchart TB
 
 | ステージ | `FROM` | 内容 |
 | --- | --- | --- |
-| `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。`systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `hostname` `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
-| `common` | `base` | `shadow-utils`。テンプレートユーザー `admin` (`useradd -m -u 1000`、追加グループ `wheel` `libvirt`、パスワード無し)。`gui-user.service` / `gui-user-setup` を配置して enable。`systemd-logind.service` を unmask |
+| `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`shadow-utils` (minimal には無い) を先に入れ、`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。続けて `systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `hostname` `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
+| `common` | `base` | テンプレートユーザー `admin` (`useradd -m -u 1000`、追加グループ `wheel` `libvirt`、パスワード無し)。`gui-user.service` / `gui-user-setup` を配置して enable。`systemd-logind.service` を unmask |
 | `kvm` | `common` | `passwd` `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install` `cockpit` `cockpit-machines` `cockpit-storaged`。`/etc/sudoers.d/wheel-nopasswd` (0440): `%wheel ALL=(ALL) NOPASSWD: ALL`。`usermod -aG libvirt libvirtdbus`。`container/kvm/*` を配置し、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6)。`EXPOSE 9091` |
-| `gui` | `common` | `epel-release` → `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`virt-manager` は EPEL から (無ければ `virt-manager is not available, skipping`)。`video` / `render` グループが無ければ作り `admin` を追加。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
+| `gui` | `common` | `epel-release` → `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`virt-manager` は `epel-release` が有効にする CRB リポジトリから (無ければ `virt-manager is not available, skipping`)。`video` / `render` グループが無ければ作り `admin` を追加。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
 
 パッケージ方針は「依存で入らないものだけを、それが来るステージに列挙する」。`microdnf --setopt=install_weak_deps=0` (`False/True` は不可)。
 

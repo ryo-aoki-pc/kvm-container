@@ -292,7 +292,7 @@ ss -ltn | grep 9091                                    # 何も出ないこと (
 for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done   # どちらも running (degraded ではない)
 sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock  # srw-rw---- root libvirt
 sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list   # 一般ユーザーが kvm-gui から kvm の libvirt に接続できること
-sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf   # すべて "none" (kvm-libvirt-conf.service)
+sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"   # すべて "none" (kvm-libvirt-conf.service)
 sudo podman exec kvm-gui ls -la /dev/dri              # renderD* が 0666
 sudo ausearch -m avc -ts recent                        # SELinux 拒否が無いこと
 ./kvm.sh virt-manager && ./kvm.sh viewer <VM名>         # GNOME デスクトップにウィンドウが出ること、VM のコンソールが見えること
