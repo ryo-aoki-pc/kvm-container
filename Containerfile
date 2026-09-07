@@ -17,7 +17,10 @@ ENV LANG=ja_JP.UTF-8 \
 # with a fixed gid before any package can allocate one. 985 is in the system range (never a host user's gid, which
 # gui-user-setup applies to the template user's own group)
 ARG LIBVIRT_GID=985
-RUN groupadd -r -g ${LIBVIRT_GID} libvirt \
+# shadow-utils (groupadd/useradd/usermod/groupmod) is not in the minimal base either; it is installed first and on its
+# own so that the group is created before any package that could allocate a "libvirt" gid of its own
+RUN microdnf -y install --setopt=install_weak_deps=0 shadow-utils \
+    && groupadd -r -g ${LIBVIRT_GID} libvirt \
     # systemd is not in the minimal base (the images run /sbin/init); dbus-daemon over the default dbus-broker;
     # hostname for cockpit; both locales so that ja and en are present, not just glibc's default langpack
     && microdnf -y install --setopt=install_weak_deps=0 \
@@ -56,9 +59,7 @@ FROM base AS common
 # template user "admin" (the name gui-user-setup expects) for GUI apps and cockpit login. At boot gui-user.service
 # renames it to the host user and applies the host user's uid/gid (and, in the kvm image, the password hash; see
 # container/common/gui-user-setup), so no password is set here. libvirt: access to the libvirt sockets (see the base stage)
-RUN microdnf -y install --setopt=install_weak_deps=0 shadow-utils \
-    && microdnf clean all && rm -rf /var/cache/dnf \
-    && useradd -m -u 1000 admin \
+RUN useradd -m -u 1000 admin \
     && usermod -aG wheel admin \
     && usermod -aG libvirt admin
 
@@ -149,7 +150,8 @@ RUN microdnf -y install --setopt=install_weak_deps=0 epel-release \
         google-noto-sans-cjk-vf-fonts \
         # tar for install-desktop icon extraction; not in the minimal base and not pulled by anything
         tar \
-    # virt-manager is not shipped with RHEL 10 derivatives, so take it from EPEL (skip if unavailable)
+    # virt-manager is not in the default RHEL 10 repositories; it comes from CRB, which epel-release enables
+    # (skip it if unavailable)
     && (microdnf -y install --setopt=install_weak_deps=0 virt-manager || echo "virt-manager is not available, skipping") \
     && microdnf clean all && rm -rf /var/cache/dnf \
     # GPU access for the GUI user (/dev/dri comes in with --device; the render nodes are also made 0666 by gui)
