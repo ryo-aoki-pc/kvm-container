@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply the container's libvirt settings to /etc/libvirt (bind-mounted persistent data)
+DefaultDependencies=no
+After=local-fs.target
+# before the daemons read their configuration
+Before=virtqemud.socket virtnetworkd.socket virtstoraged.socket virtnodedevd.socket virtsecretd.socket virtlogd.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/libvirt-conf
+
+[Install]
+WantedBy=sysinit.target
