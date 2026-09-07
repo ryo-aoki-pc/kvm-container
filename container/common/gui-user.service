@@ -1,5 +1,5 @@
 [Unit]
-Description=Mirror the host user (name, uid/gid, password) into the container's GUI/cockpit user
+Description=Create the container's GUI/cockpit user from the host user (name, uid/gid, password)
 DefaultDependencies=no
 After=local-fs.target
 # before logind: it reads /var/lib/systemd/linger only at startup, and gui-user-setup creates the linger file

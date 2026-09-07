@@ -10,9 +10,12 @@
 # XDG_RUNTIME_DIR is NOT the host's: the apps use the container's own /run/user/<uid>, which logind creates for the
 # lingering GUI user (see gui-user-setup)
 set -e
-# the GUI user's name is HOST_USER from PID 1's environment (set by kvm.sh); "admin" is the template user's name
+# the GUI user is the one gui-user-setup created from HOST_USER in PID 1's environment (set by kvm.sh)
 GUI_USER=${GUI_USER:-$(tr '\0' '\n' </proc/1/environ | sed -n 's/^HOST_USER=//p')}
-GUI_USER=${GUI_USER:-admin}
+if [ -z "$GUI_USER" ]; then
+  echo "!! gui: HOST_USER is not set, so no GUI user exists (start this container with ./kvm.sh up)" >&2
+  exit 1
+fi
 GUI_UID=$(id -u "$GUI_USER")
 GUI_GID=$(id -g "$GUI_USER")
 HOST_RUNTIME_DIR=${HOST_RUNTIME_DIR:-/run/host-xdg-runtime}

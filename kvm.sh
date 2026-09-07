@@ -273,7 +273,7 @@ start_kvm() {
   $PODMAN image exists "$KVM_IMAGE" || build_image kvm
   prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
   prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
-  prepare_data_dir "$KVM_DATA_DIR/home" /home/admin
+  prepare_data_dir "$KVM_DATA_DIR/home" /etc/skel
   check_host_network
   $PODMAN rm -f -i "$KVM_CONTAINER" >/dev/null 2>&1 || true
   # /run/libvirt is shared with the GUI container through a host directory (on tmpfs). Like the container's own /run it

@@ -135,7 +135,7 @@ cockpit はホストのブラウザからも `https://localhost:9091` で開け�
 | `Containerfile` | AlmaLinux 10 minimal ベース (`microdnf`) のマルチステージ。`base` (systemd、`libvirt` グループ、共通のマスク) → `common` (テンプレートユーザーと `gui-user.service`) → `kvm` / `gui`。EPEL は `gui` だけ (virt-manager)。どちらも systemd (`/sbin/init`) で常駐 |
 | `kvm.sh` | ホスト側の操作スクリプト (`sudo podman` を使用) |
 | `host/wsl.sh` | WSL2 固有の処理 (判定、`/dev/kvm` が無いときの案内、WSLg の runtime dir、ソフトウェア描画の強制)。`kvm.sh` が source し、WSL2 のときだけ既定の挙動を上書きする |
-| `container/common/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードに合わせ、linger を有効にする (両イメージ) |
+| `container/common/gui-user-setup` + `gui-user.service` | 起動時にコンテナ内の GUI/cockpit ユーザーをホストユーザーの名前・uid/gid・パスワードで作り、linger を有効にする (両イメージ) |
 | `container/kvm/kvm-perms.service` | `/dev/kvm` `/dev/net/tun` の権限調整と ip_forward 有効化 |
 | `container/kvm/kvm-libvirt-conf.service` + `libvirt-conf` | 起動時に `/etc/libvirt` へ上記の設定を冪等に適用する |
 | `container/kvm/virtd-socket.conf` | `virt{qemu,network,storage,nodedev,secret}d.socket` の drop-in (`SocketMode=0660` `SocketGroup=libvirt`) |
@@ -162,7 +162,7 @@ cockpit はホストのブラウザからも `https://localhost:9091` で開け�
 - `/tmp/.X11-unix` を **読み取り専用**でマウント (X11 フォールバック用)。読み取り専用にするのは、
   コンテナの systemd-tmpfiles がホストの X ソケットを削除してしまうのを防ぐためです (同じ理由で `tmpfiles.d/x11.conf` をマスク)
 - どちらのコンテナでも GUI/cockpit ユーザーは、起動時に `gui-user.service` が `kvm.sh up` を実行したホストユーザーの
-  名前・uid/gid に合わせます (イメージ内のテンプレートユーザー `admin` をリネーム)。
+  名前・uid/gid で作ります (イメージには一般ユーザーを焼き込んでいません)。
   ホストの runtime dir は 0700 なので、その中のソケットに届くには uid の一致が必要です。cockpit はコンテナ内の `/etc/shadow` で認証するため、
   `kvm` にはパスワードハッシュもコピーします (`kvm-gui` には渡しません)。ハッシュは `podman run --env-file` で渡します (コマンドラインには出ません)。
   ホストでパスワードを変えたら `./kvm.sh down kvm` → `./kvm.sh up` で反映されます
