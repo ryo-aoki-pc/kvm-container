@@ -19,6 +19,8 @@ VM を止めずに済みます。ディスプレイの無いホストでは `kvm
 | 物理マシン / VM の AlmaLinux 10 + GNOME | GNOME (Wayland) デスクトップに表示 |
 | ディスプレイの無いホスト (SSH のみ) | cockpit の Web コンソール (noVNC) をブラウザで利用 |
 
+実装の詳細な仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [docs/SPEC.md](docs/SPEC.md) にまとめてあります。
+
 ## 前提
 
 共通: podman (root で利用、`sudo` 可)。ホストにブラウザ・qemu・cockpit は不要です。
