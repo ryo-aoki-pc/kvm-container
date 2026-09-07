@@ -1,0 +1,26 @@
+#!/bin/sh
+# apply the libvirt settings this container needs to /etc/libvirt, idempotently, at every boot.
+# /etc/libvirt is a bind mount of data/etc-libvirt that kvm.sh seeds from the image only when it is empty, so anything
+# done to these files at image build time would never reach an existing data directory; doing it here keeps old and new
+# installs identical. Only the listed keys are touched (commented-out default or an earlier value), everything else the
+# user put into these files stays as it is
+set -e
+# set "key = value" in a libvirt config file: replace the line (possibly commented out) or append it
+set_key() {   # file key value
+  if grep -q "^#\?$2 = " "$1"; then
+    sed -i "s|^#\?$2 = .*|$2 = $3|" "$1"
+  else
+    printf '\n%s = %s\n' "$2" "$3" >>"$1"
+  fi
+}
+# the GUI container connects through the shared /run/libvirt from another pid namespace, where the peer pid seen by the
+# daemons (SO_PEERCRED) is 0 and the default polkit authentication cannot identify the client. Authenticate by socket
+# permissions instead: the sockets are root:libvirt 0660 (SocketMode/SocketGroup drop-ins of the virt*d.socket units,
+# which is what decides the permissions under socket activation) and the clients are members of the libvirt group
+for d in virtqemud virtnetworkd virtstoraged virtnodedevd virtsecretd; do
+  [ -f "/etc/libvirt/$d.conf" ] || continue
+  set_key "/etc/libvirt/$d.conf" auth_unix_rw '"none"'
+done
+# qemu inside a container: no SELinux/AppArmor labelling of the guests, no per-VM mount namespaces
+set_key /etc/libvirt/qemu.conf security_driver '"none"'
+set_key /etc/libvirt/qemu.conf namespaces '[]'

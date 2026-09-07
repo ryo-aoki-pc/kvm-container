@@ -1,6 +1,8 @@
 #!/bin/bash
-# start a GUI app inside the container as the GUI user (the host user mirrored by gui-user.service) on the host display (Wayland/X11)
-#   gui firefox            -> opens cockpit
+# start a GUI app inside the GUI container (kvm-gui) as the GUI user (the host user mirrored by gui-user.service) on the
+# host display (Wayland/X11). libvirt runs in the kvm container: the apps reach it through /run/libvirt, which is a
+# host directory shared by both containers (see kvm.sh), and the GUI user is in the libvirt group that owns the sockets
+#   gui firefox            -> opens cockpit (served by the kvm container on the host's network)
 #   gui virt-manager
 #   gui virt-viewer <vm>
 # DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts, as absolute paths
@@ -28,7 +30,7 @@ export LANG=${LANG:-ja_JP.UTF-8}
 # a Wayland socket that is gone (the host session was restarted) would only make GTK retry; drop it so that X11 is tried
 case "${WAYLAND_DISPLAY:-}" in
   /*) if [ ! -S "$WAYLAND_DISPLAY" ]; then
-        echo "gui: Wayland socket $WAYLAND_DISPLAY not found (./kvm.sh down && ./kvm.sh up after a host re-login); trying X11" >&2
+        echo "gui: Wayland socket $WAYLAND_DISPLAY not found (./kvm.sh up recreates this container after a host re-login); trying X11" >&2
         unset WAYLAND_DISPLAY
       fi ;;
 esac
@@ -53,8 +55,7 @@ if [ "${1:-}" = "virt-viewer" ]; then
   cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
 fi
 
-# right after the container starts, wait for gui-user's uid alignment and for virtqemud
-# (returns immediately in steady state)
+# right after the container starts, wait for gui-user's uid alignment (returns immediately in steady state)
 timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
 # the GUI user's systemd --user instance provides /run/user/<uid> and the session bus. logind starts it at boot because
 # the user lingers; start it here as well in case logind has not got to it yet (a no-op when it is already running)
@@ -64,8 +65,11 @@ if [ ! -d "$XDG_RUNTIME_DIR" ]; then
   install -d -m 700 -o "$GUI_UID" -g "$GUI_GID" "$XDG_RUNTIME_DIR"
 fi
 if [ -S "$XDG_RUNTIME_DIR/bus" ]; then export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"; fi
+# the render nodes come in with --device /dev/dri and keep the host's owner/mode; make sure the GUI user can open them
+# (the host's udev already uses 0666 for renderD*, this covers older rules)
+chmod 0666 /dev/dri/renderD* 2>/dev/null || true
 
 # runuser without --login passes the whole environment on: the variables exported above plus what podman exec inherited
-# from the container's configuration. Drop the host user's secrets before the app can see them (/proc/<pid>/environ)
+# from the container's configuration. Drop the host user's identity before the app can see it (/proc/<pid>/environ)
 unset HOST_PASSWORD_HASH HOST_USER HOST_UID HOST_GID
 exec setsid -f runuser -u "$GUI_USER" -- "${cmd[@]}" >>/var/log/gui.log 2>&1
