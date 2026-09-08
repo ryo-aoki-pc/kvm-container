@@ -56,13 +56,9 @@ CMD ["/sbin/init"]
 # ---- common: the mirrored host user (both images) -----------------------------------------------------------------
 FROM base AS common
 
-# template user "admin" (the name gui-user-setup expects) for GUI apps and cockpit login. At boot gui-user.service
-# renames it to the host user and applies the host user's uid/gid (and, in the kvm image, the password hash; see
-# container/common/gui-user-setup), so no password is set here. libvirt: access to the libvirt sockets (see the base stage)
-RUN useradd -m -u 1000 admin \
-    && usermod -aG wheel admin \
-    && usermod -aG libvirt admin
-
+# The images ship no unprivileged user of their own: gui-user.service creates the GUI/cockpit user at boot from the host
+# user's name, uid/gid, groups and password hash (see container/common/gui-user-setup), so nothing about the host has to
+# be known at build time
 COPY container/common/gui-user.service /etc/systemd/system/
 COPY container/common/gui-user-setup /usr/local/bin/gui-user-setup
 RUN chmod +x /usr/local/bin/gui-user-setup \
@@ -97,7 +93,7 @@ RUN microdnf -y install --setopt=install_weak_deps=0 \
         cockpit-machines \
         cockpit-storaged \
     && microdnf clean all && rm -rf /var/cache/dnf \
-    # passwordless sudo for wheel (cockpit's administrative access); by group so it survives the rename
+    # passwordless sudo for wheel (cockpit's administrative access); by group, so it does not depend on the host user's name
     && echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-nopasswd \
     && chmod 0440 /etc/sudoers.d/wheel-nopasswd \
     # cockpit-machines talks to libvirt through libvirt-dbus, which runs as "libvirtdbus". It is normally let in by a
@@ -154,9 +150,9 @@ RUN microdnf -y install --setopt=install_weak_deps=0 epel-release \
     # (skip it if unavailable)
     && (microdnf -y install --setopt=install_weak_deps=0 virt-manager || echo "virt-manager is not available, skipping") \
     && microdnf clean all && rm -rf /var/cache/dnf \
-    # GPU access for the GUI user (/dev/dri comes in with --device; the render nodes are also made 0666 by gui)
-    && for g in video render; do getent group "$g" >/dev/null || groupadd -r "$g"; done \
-    && usermod -aG video,render admin
+    # GPU access for the GUI user (/dev/dri comes in with --device; the render nodes are also made 0666 by gui).
+    # gui-user-setup puts the user it creates into these groups, so they only have to exist here
+    && for g in video render; do getent group "$g" >/dev/null || groupadd -r "$g"; done
 
 COPY container/gui/gui /usr/local/bin/gui
 RUN chmod +x /usr/local/bin/gui \

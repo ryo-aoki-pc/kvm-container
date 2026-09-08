@@ -1,62 +1,69 @@
 #!/bin/bash
-# make the container's GUI/cockpit user mirror the host user: name, uid/gid and password hash
+# create the container's GUI/cockpit user as a copy of the host user: name, uid/gid, groups and password hash
 # (the host's runtime dir is mounted read-only at /run/host-xdg-runtime and is 0700, so the uid must match to reach the
 #  Wayland/X11 sockets in it; cockpit authenticates against the container's /etc/shadow, so the host password hash is copied in)
 # HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH are passed with podman run -e / --env-file and can only be
-# read from the environment of PID 1 (systemd). The image ships a template user "admin" (uid 1000) that gets renamed.
+# read from the environment of PID 1 (systemd). The images ship no user of their own: the one created here is the only
+# unprivileged user, so a container started without those variables (i.e. not by kvm.sh) simply has none.
 # The user is also made to linger: logind then starts its systemd --user instance at boot, which gives the container
 # its OWN /run/user/<uid> (a tmpfs) with a session bus for the GUI apps and cockpit-bridge, and keeps it when the last
 # cockpit session ends. Nothing here touches the host's runtime dir (it is never mounted at /run/user/<uid>, see kvm.sh)
 set -e
-template=admin
 env_of_pid1() { tr '\0' '\n' </proc/1/environ | sed -n "s/^$1=//p"; }
 # same effect as loginctl enable-linger, but works before logind is running (this service runs in sysinit.target)
 enable_linger() { mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$1"; }
-want_user=$(env_of_pid1 HOST_USER); want_uid=$(env_of_pid1 HOST_UID); want_gid=$(env_of_pid1 HOST_GID)
+user=$(env_of_pid1 HOST_USER); want_uid=$(env_of_pid1 HOST_UID); want_gid=$(env_of_pid1 HOST_GID)
 hash=$(env_of_pid1 HOST_PASSWORD_HASH)
-[ -n "$want_uid" ] || { enable_linger "$template"; exit 0; }
+if [ -z "$user" ] || [ -z "$want_uid" ]; then
+  echo "gui-user: HOST_USER/HOST_UID not passed (container not started by kvm.sh); no GUI user is created"
+  exit 0
+fi
 [ -n "$want_gid" ] || want_gid=$want_uid
-[ -n "$want_user" ] || want_user=$template
 
-# find the user to adjust: the template on first boot, or the already renamed user on later boots
-if getent passwd "$template" >/dev/null; then
-  user=$template
-elif getent passwd "$want_user" >/dev/null; then
-  user=$want_user
-else
-  echo "gui-user: ERROR neither $template nor $want_user exists" >&2
-  exit 1
-fi
-
-if [ "$user" != "$want_user" ]; then
-  if getent passwd "$want_user" >/dev/null; then
-    echo "gui-user: ERROR user name $want_user is already used inside the container; cannot rename $user" >&2
-    exit 1
-  fi
-  echo "gui-user: rename $user -> $want_user (home /home/$want_user)"
-  getent group "$want_user" >/dev/null || groupmod -n "$want_user" "$user"
-  usermod -l "$want_user" -d "/home/$want_user" "$user"
-  user=$want_user
-fi
-
-cur_uid=$(id -u "$user"); cur_gid=$(id -g "$user")
-if [ "$cur_gid" != "$want_gid" ]; then
-  if getent group "$want_gid" >/dev/null; then
-    echo "gui-user: $user primary group $cur_gid -> existing gid $want_gid ($(getent group "$want_gid" | cut -d: -f1))"
-    usermod -g "$want_gid" "$user"
+# primary group: reuse whatever already owns the wanted gid, otherwise give the user's own group that gid
+if ! getent group "$want_gid" >/dev/null; then
+  if getent group "$user" >/dev/null; then
+    echo "gui-user: group $user gid $(getent group "$user" | cut -d: -f3) -> $want_gid"
+    groupmod -g "$want_gid" "$user"
   else
-    echo "gui-user: group $(id -gn "$user") gid $cur_gid -> $want_gid"
-    groupmod -g "$want_gid" "$(id -gn "$user")"
+    echo "gui-user: create group $user (gid $want_gid)"
+    groupadd -g "$want_gid" "$user"
   fi
 fi
-if [ "$cur_uid" != "$want_uid" ]; then
+
+if ! getent passwd "$user" >/dev/null; then
   if getent passwd "$want_uid" >/dev/null; then
-    echo "gui-user: ERROR uid $want_uid is already used by $(getent passwd "$want_uid" | cut -d: -f1); cannot remap $user" >&2
+    echo "gui-user: ERROR uid $want_uid is already used by $(getent passwd "$want_uid" | cut -d: -f1); cannot create $user" >&2
     exit 1
   fi
-  echo "gui-user: $user uid $cur_uid -> $want_uid"
-  usermod -u "$want_uid" "$user"
+  echo "gui-user: create user $user (uid $want_uid, gid $want_gid, home /home/$user)"
+  # -m only matters when /home/<user> is absent: it is normally the bind mount of data/home, and useradd then keeps
+  # the existing directory (no skel copy; kvm.sh seeds data/home from /etc/skel instead). The chown below fixes the owner
+  useradd -m -u "$want_uid" -g "$want_gid" "$user"
+else
+  # the user survives a restart of the container (kvm.sh up always recreates it, so this is for podman restart and the
+  # like): realign it in case the host's uid/gid changed
+  cur_uid=$(id -u "$user"); cur_gid=$(id -g "$user")
+  if [ "$cur_gid" != "$want_gid" ]; then
+    echo "gui-user: $user primary group $cur_gid -> $want_gid"
+    usermod -g "$want_gid" "$user"
+  fi
+  if [ "$cur_uid" != "$want_uid" ]; then
+    if getent passwd "$want_uid" >/dev/null; then
+      echo "gui-user: ERROR uid $want_uid is already used by $(getent passwd "$want_uid" | cut -d: -f1); cannot remap $user" >&2
+      exit 1
+    fi
+    echo "gui-user: $user uid $cur_uid -> $want_uid"
+    usermod -u "$want_uid" "$user"
+  fi
 fi
+
+# supplementary groups, whichever of them this image has: wheel for cockpit's administrative access (sudo), libvirt for
+# the sockets in the shared /run/libvirt, video/render for /dev/dri (what the GUI apps need; the gui image creates them)
+for g in wheel libvirt video render; do
+  getent group "$g" >/dev/null || continue
+  usermod -aG "$g" "$user"
+done
 
 if [ -n "$hash" ]; then
   echo "gui-user: set the host password hash for $user"
@@ -67,7 +74,6 @@ else
 fi
 
 echo "gui-user: enable lingering for $user (container-private /run/user/$want_uid and session bus from boot)"
-[ "$user" = "$template" ] || rm -f "/var/lib/systemd/linger/$template"
 enable_linger "$user"
 # the home directory is normally bind-mounted from the host (data/home); skip if it is absent so the service does not fail
 [ ! -d "/home/$user" ] || chown -R "$want_uid:$want_gid" "/home/$user"

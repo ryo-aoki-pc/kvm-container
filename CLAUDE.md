@@ -40,11 +40,11 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
    引数 (`GUI_ARGS`) と、ホストユーザーの名前・uid/gid・パスワードハッシュ (`HOST_ARGS`) に変換する。
 2. **イメージ (`Containerfile`)** — AlmaLinux 10 minimal + `microdnf` のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、
-   両コンテナ共通のマスク) → `common` (テンプレートユーザー `admin` + `gui-user.service`) → `kvm` / `gui` (`podman build --target`)。
+   両コンテナ共通のマスク) → `common` (`gui-user.service` = GUI/cockpit ユーザーの起動時作成) → `kvm` / `gui` (`podman build --target`)。
    パッケージは「依存で入らないものだけ」を、それが来るステージに列挙する方針 (コメントに依存関係の理由が書いてある)。
    unit の enable / mask もここ。
 3. **コンテナ内 (`container/`)** — 起動時に自分を環境に合わせる部分。ロールごとのディレクトリに分かれる:
-   `common/` は `gui-user-setup` (ユーザーの同期、両イメージ)、`kvm/` は `kvm-perms.service` (デバイス権限)、
+   `common/` は `gui-user-setup` (GUI ユーザーの作成、両イメージ)、`kvm/` は `kvm-perms.service` (デバイス権限)、
    `kvm-libvirt-conf.service` + `libvirt-conf` (`/etc/libvirt` の設定)、`virtd-socket.conf` (ソケット権限の drop-in)、
    `cockpit-listen-generator` (listen アドレス)、`kvm-net-teardown.service` (終了処理)、`gui/` は `gui` (GUI アプリ起動)。
 
@@ -90,9 +90,10 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
   `NetworkManager.service` はホストの NIC を管理し始めるためマスク、`NetworkManager-wait-online.service` は
   podman の eth0 が online にならず 60 秒待って degraded になるためマスク。
   libvirt の `virbr0` はホスト上に作られるので、`kvm-net-teardown.service` が停止時に `net-destroy` する。
-- **両コンテナの GUI/cockpit ユーザーはホストユーザーの写し**。イメージ (`common` 段) にはテンプレートユーザー `admin` (uid 1000) が入っていて、
-  `gui-user-setup` が起動時にリネーム + uid/gid 変更 + (`kvm` では) パスワードハッシュ設定を行う (ホストの runtime dir が 0700 なので
-  uid 一致が必要、cockpit はコンテナ内の `/etc/shadow` で認証する)。`kvm.sh` は root で実行させない。
+- **両コンテナの GUI/cockpit ユーザーはホストユーザーの写し**。イメージには一般ユーザーを焼き込まず、`gui-user-setup` が起動時に
+  ホストユーザーの名前・uid/gid でユーザーを作り、そのイメージにあるグループ (`wheel` / `libvirt` / `video` / `render`) に入れて
+  (`kvm` では) パスワードハッシュを設定する (ホストの runtime dir が 0700 なので uid 一致が必要、cockpit はコンテナ内の
+  `/etc/shadow` で認証する)。`kvm.sh` は root で実行させない。
 - **`data/` はバインドマウントなのでイメージの内容が自動でコピーされない**。`prepare_data_dir` が空のときだけ
   `kvm` イメージで一時コンテナを起こして `cp -a` する (`--security-opt label=disable` が必要: data はユーザーのホーム配下 = `user_home_t`)。
   `data/var-libvirt` → `/var/lib/libvirt` (kvm rw、gui ro)、`data/etc-libvirt` → `/etc/libvirt` (kvm)、

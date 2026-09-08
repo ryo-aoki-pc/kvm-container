@@ -91,7 +91,6 @@ flowchart LR
 | イメージ | `localhost/kvm-container/kvm:latest` と `localhost/kvm-container/gui:latest` (`KVM_IMAGE` / `GUI_IMAGE`)。1 つの Containerfile の `--target kvm` / `--target gui` |
 | ホストユーザー | `kvm.sh` を実行した一般ユーザー。`id -un` / `id -u` / `id -g` の値が `HOST_USER` / `HOST_UID` / `HOST_GID` になる |
 | GUI ユーザー (= cockpit ユーザー) | 両コンテナ内でホストユーザーと同じ名前・uid/gid を持つユーザー。`kvm` ではパスワードハッシュも同じ (cockpit のログインアカウント)、`kvm-gui` ではロック |
-| テンプレートユーザー `admin` | イメージ (`common` 段) に焼き込まれた uid 1000 のユーザー。起動時に GUI ユーザーへリネームされる |
 | ホスト runtime dir | ホストの `$XDG_RUNTIME_DIR` (GNOME: `/run/user/UID`、WSLg: `/mnt/wslg/runtime-dir` への symlink を含む)。`kvm-gui` の `/run/host-xdg-runtime` に読み取り専用でマウントされる |
 | コンテナ runtime dir | コンテナ内の `/run/user/UID`。コンテナの logind が GUI ユーザー用に作る (`kvm` では tmpfs、非特権の `kvm-gui` では `/run` 直下の通常のディレクトリ)。ホストとは無関係 |
 | 共有 run dir | ホストの `/run/kvm-container/libvirt` (`KVM_RUN_DIR`)。両コンテナの `/run/libvirt` にバインドマウントされ、libvirt のソケットを共有する。`up` で空にし `down` で消す |
@@ -229,7 +228,7 @@ flowchart TB
   end
   subgraph L2 ["層 2: イメージ (Containerfile、1 ファイルのマルチステージ)"]
     base["base: 10-minimal + shadow-utils / systemd / dbus-daemon / hostname / locale<br/>libvirt グループを gid 985 で固定、両イメージ共通の unit マスク"]
-    common["common: テンプレートユーザー admin (wheel, libvirt)<br/>gui-user.service、systemd-logind の unmask"]
+    common["common: gui-user.service / gui-user-setup (GUI ユーザーを起動時に作成)<br/>systemd-logind の unmask"]
     kvmimg["kvm (--target kvm → localhost/kvm-container/kvm)<br/>libvirt / qemu-kvm / virt-install / cockpit、sudoers、libvirtdbus を libvirt グループへ"]
     guiimg["gui (--target gui → localhost/kvm-container/gui)<br/>EPEL、firefox / virt-viewer / virt-manager / libvirt-client、フォント、video / render グループ"]
     base --> common
@@ -258,7 +257,7 @@ flowchart TB
 | `host/wsl.sh` | ホスト | | WSL2 判定と `host_*` フックの上書き | `kvm.sh` が起動直後に source |
 | `desktop/kvm-*.desktop` | ホスト | | Activities 用ランチャーのテンプレート | `install-desktop` が `~/.local/share/applications/` に配置 |
 | `Containerfile` | イメージ | | AlmaLinux 10 minimal + `microdnf`。`base` → `common` → `kvm` / `gui` | `build` |
-| `container/common/gui-user-setup` + `gui-user.service` | コンテナ | 両方 | GUI/cockpit ユーザーをホストユーザーに合わせ、linger を有効化 | 起動時 (sysinit、logind より前) |
+| `container/common/gui-user-setup` + `gui-user.service` | コンテナ | 両方 | GUI/cockpit ユーザーをホストユーザーとして作り、linger を有効化 | 起動時 (sysinit、logind より前) |
 | `container/kvm/kvm-perms.service` | コンテナ | kvm | `/dev/kvm` `/dev/net/tun` の権限と `ip_forward` | 起動時 (sysinit、virtqemud より前) |
 | `container/kvm/kvm-libvirt-conf.service` + `libvirt-conf` | コンテナ | kvm | `/etc/libvirt` (= `data/etc-libvirt`) に `auth_unix_rw` と qemu.conf の設定を冪等に適用 | 起動時 (sysinit、virt*d の .socket より前) |
 | `container/kvm/virtd-socket.conf` | コンテナ | kvm | `virt{qemu,network,storage,nodedev,secret}d.socket` の drop-in (`SocketMode=0660` `SocketGroup=libvirt`) | ビルド時に配置、socket 起動時に効く |
@@ -310,9 +309,9 @@ flowchart TB
 | ステージ | `FROM` | 内容 |
 | --- | --- | --- |
 | `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`shadow-utils` (minimal には無い) を先に入れ、`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。続けて `systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `hostname` `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
-| `common` | `base` | テンプレートユーザー `admin` (`useradd -m -u 1000`、追加グループ `wheel` `libvirt`、パスワード無し)。`gui-user.service` / `gui-user-setup` を配置して enable。`systemd-logind.service` を unmask |
+| `common` | `base` | `gui-user.service` / `gui-user-setup` を配置して enable (一般ユーザーはイメージに焼き込まず、起動時に作る)。`systemd-logind.service` を unmask |
 | `kvm` | `common` | `passwd` `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install` `cockpit` `cockpit-machines` `cockpit-storaged`。`/etc/sudoers.d/wheel-nopasswd` (0440): `%wheel ALL=(ALL) NOPASSWD: ALL`。`usermod -aG libvirt libvirtdbus`。`container/kvm/*` を配置し、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6)。`EXPOSE 9091` |
-| `gui` | `common` | `epel-release` → `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`virt-manager` は `epel-release` が有効にする CRB リポジトリから (無ければ `virt-manager is not available, skipping`)。`video` / `render` グループが無ければ作り `admin` を追加。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
+| `gui` | `common` | `epel-release` → `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`virt-manager` は `epel-release` が有効にする CRB リポジトリから (無ければ `virt-manager is not available, skipping`)。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
 
 パッケージ方針は「依存で入らないものだけを、それが来るステージに列挙する」。`microdnf --setopt=install_weak_deps=0` (`False/True` は不可)。
 
@@ -412,7 +411,7 @@ flowchart LR
 | 共有ディレクトリ | ホストの `/run/kvm-container/libvirt` (tmpfs) を両コンテナの `/run/libvirt` に rw でバインドマウント。`start_kvm` が起動前に **中身だけ** 空にし (`find -mindepth 1 -delete`)、`down` (引数なし) が `/run/kvm-container` ごと削除する | コンテナ自身の `/run` と同様に起動時は空である必要がある (前回のソケット・pid・VM 状態が残るとデーモンが混乱する)。ディレクトリ自体を消さないのは、起動中の `kvm-gui` がマウントしている inode を保つため |
 | 認証方式 | `virtqemud` `virtnetworkd` `virtstoraged` `virtnodedevd` `virtsecretd` の `.conf` に `auth_unix_rw = "none"` (`libvirt-conf` が該当ファイルがあるものだけ設定) | 別 pid 名前空間からの接続では `SO_PEERCRED` の pid が 0 になり polkit が成立しない |
 | ソケット権限 | `virtd-socket.conf` (drop-in `virt*d.socket.d/kvm-container.conf`): `SocketMode=0660` `SocketGroup=libvirt`。`virtlogd.socket` は対象外 | socket 起動では `/etc/libvirt/*.conf` の `unix_sock_group` / `unix_sock_rw_perms` ではなく `.socket` unit の設定が権限を決める |
-| グループ | `libvirt` の gid は `base` 段で 985 に固定 (`LIBVIRT_GID`)。`admin` (→ GUI ユーザー) は両イメージで `libvirt` に所属。`kvm` の `libvirtdbus` も所属 | `kvm-gui` 側のユーザーがソケットに届くには gid の一致が必要。cockpit-machines は libvirt-dbus 経由で接続する |
+| グループ | `libvirt` の gid は `base` 段で 985 に固定 (`LIBVIRT_GID`)。GUI ユーザーは `gui-user-setup` が両イメージで `libvirt` に入れる。`kvm` の `libvirtdbus` も所属 | `kvm-gui` 側のユーザーがソケットに届くには gid の一致が必要。cockpit-machines は libvirt-dbus 経由で接続する |
 | qemu.conf | `libvirt-conf` が `security_driver = "none"`、`namespaces = []` を設定 | コンテナ内の qemu にゲストの SELinux ラベル付けと VM ごとのマウント名前空間は使えない |
 | 適用方法 | `libvirt-conf` の `set_key`: `^#?key = ` の行があれば置換、無ければ末尾に追記。それ以外の行は触らない | `/etc/libvirt` は `data/etc-libvirt` で空のときしか seed されないため、ビルド時に書いても既存の `data/` には届かない。起動ごとの冪等適用なら旧 `data/` もそのまま使える |
 | 診断 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` が通ればコンテナをまたぐ接続は正常 (CLAUDE.md の回帰テスト) | |
@@ -491,9 +490,9 @@ flowchart LR
   ga --> genv
   tzarg --> kenv
   tzarg --> genv
-  kenv -->|"HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH"| kgus["gui-user-setup (kvm): リネーム + ハッシュ設定"]
+  kenv -->|"HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH"| kgus["gui-user-setup (kvm): ユーザー作成 + ハッシュ設定"]
   kenv -->|"COCKPIT_LISTEN"| gen["generator: cockpit-listen"]
-  genv -->|"HOST_USER / HOST_UID / HOST_GID (ハッシュ無し)"| ggus["gui-user-setup (kvm-gui): リネーム + ロック"]
+  genv -->|"HOST_USER / HOST_UID / HOST_GID (ハッシュ無し)"| ggus["gui-user-setup (kvm-gui): ユーザー作成 + ロック"]
   genv -->|"HOST_USER、COCKPIT_LISTEN のポート"| gui["gui"]
   genv -->|"WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / PULSE_SERVER / LIBGL_ALWAYS_SOFTWARE<br/>(podman exec が環境変数として継承)"| gui
   gui -->|"unset HOST_PASSWORD_HASH HOST_USER HOST_UID HOST_GID"| app["runuser → GUI アプリ"]
@@ -669,7 +668,7 @@ flowchart TD
 ```
 
 図 12: `data/` の初期化と共有 run dir の寿命。バインドマウントは named volume と違い初回にイメージ側の内容をコピーしないので、
-空のときだけ `kvm` イメージの一時コンテナで `cp -a` する。seed 元は `/var/lib/libvirt` `/etc/libvirt` `/home/admin` (テンプレートユーザーのホーム)。
+空のときだけ `kvm` イメージの一時コンテナで `cp -a` する。seed 元は `/var/lib/libvirt` `/etc/libvirt` `/etc/skel` (ホームの雛形)。
 
 | 項目 | 仕様 |
 | --- | --- |
@@ -871,7 +870,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  a["podman exec kvm-gui gui app args"] --> b["GUI_USER = 環境変数 GUI_USER → PID 1 の HOST_USER → admin<br/>id で uid / gid を取得"]
+  a["podman exec kvm-gui gui app args"] --> b["GUI_USER = 環境変数 GUI_USER → PID 1 の HOST_USER (どちらも空なら !! HOST_USER is not set で exit 1)<br/>id で uid / gid を取得"]
   b --> c{"DISPLAY と WAYLAND_DISPLAY が両方とも空か"}
   c -->|"はい"| c1["!! GUI unavailable: the container was started without a display (headless)<br/>exit 2"]
   c -->|"いいえ"| d["環境設定: XDG_RUNTIME_DIR=/run/user/UID、MOZ_ENABLE_WAYLAND=1、<br/>GDK_BACKEND=wayland,x11、GSETTINGS_BACKEND=keyfile、LANG (既定 ja_JP.UTF-8)、LIBGL_ALWAYS_SOFTWARE (渡されたときのみ)"]
@@ -900,38 +899,33 @@ flowchart TD
 `runuser` は `--login` 無しなので環境がそのまま渡り、そのためにホストユーザーの情報を先に `unset` する
 (`kvm-gui` にハッシュは渡っていないが、同じコードで消す)。
 
-### 5.4 ユーザー同期 (`container/common/gui-user-setup`、両コンテナ)
+### 5.4 ユーザー作成 (`container/common/gui-user-setup`、両コンテナ)
 
 ```mermaid
 flowchart TD
   s["gui-user.service (sysinit、logind より前)"] --> r["PID 1 の environ から HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH を読む"]
-  r --> a{"HOST_UID があるか"}
-  a -->|"いいえ"| a1["admin を linger にして終了 (kvm.sh 以外から起動された場合)"]
-  a -->|"はい"| b["HOST_GID 省略時は HOST_UID、HOST_USER 省略時は admin"]
-  b --> c{"対象ユーザーの決定"}
-  c -->|"admin が存在 (初回起動)"| c1["user = admin"]
-  c -->|"HOST_USER が存在 (2 回目以降)"| c2["user = HOST_USER"]
-  c -->|"どちらも無い"| c3["gui-user: ERROR neither admin nor HOST_USER exists<br/>exit 1"]
-  c1 --> d{"user と HOST_USER が異なるか"}
-  c2 --> e
-  d -->|"はい"| d1{"HOST_USER が既に存在するか"}
-  d1 -->|"はい"| d2["gui-user: ERROR user name ... is already used<br/>exit 1"]
-  d1 -->|"いいえ"| d3["groupmod -n HOST_USER (同名グループが無いときのみ)<br/>usermod -l HOST_USER -d /home/HOST_USER"] --> e
-  d -->|"いいえ"| e{"主グループの gid が HOST_GID と異なるか"}
-  e -->|"はい、HOST_GID のグループが既にある"| e1["usermod -g HOST_GID (既存グループに変更)"] --> f
-  e -->|"はい、HOST_GID は未使用"| e2["groupmod -g HOST_GID (主グループの gid を変更)"] --> f
-  e -->|"いいえ"| f{"uid が HOST_UID と異なるか"}
-  f -->|"はい、HOST_UID が使用中"| f1["gui-user: ERROR uid ... is already used<br/>exit 1"]
-  f -->|"はい"| f2["usermod -u HOST_UID"] --> g
-  f -->|"いいえ"| g{"HOST_PASSWORD_HASH があるか"}
-  g -->|"はい (kvm)"| g1["usermod -p HASH"] --> h
-  g -->|"いいえ (kvm-gui、またはホストにパスワード無し)"| g2["usermod -L (ロック: cockpit ログイン不可)"] --> h
-  h["linger: /var/lib/systemd/linger/USER を作成 (admin の分は削除)"] --> i["/home/USER があれば chown -R HOST_UID:HOST_GID"]
+  r --> a{"HOST_USER と HOST_UID があるか"}
+  a -->|"いいえ"| a1["no GUI user is created と表示して exit 0<br/>(kvm.sh 以外から起動された場合)"]
+  a -->|"はい"| b["HOST_GID 省略時は HOST_UID"]
+  b --> c{"HOST_GID のグループが既にあるか"}
+  c -->|"ある"| e
+  c -->|"無い、同名グループがある"| c1["groupmod -g HOST_GID HOST_USER"] --> e
+  c -->|"無い"| c2["groupadd -g HOST_GID HOST_USER"] --> e
+  e{"HOST_USER が既に存在するか"}
+  e -->|"いいえ (通常の起動)"| f{"HOST_UID が使用中か"}
+  f -->|"はい"| f1["gui-user: ERROR uid ... is already used<br/>exit 1"]
+  f -->|"いいえ"| f2["useradd -m -u HOST_UID -g HOST_GID HOST_USER<br/>(/home/USER はバインドマウント済みなので skel はコピーされない)"] --> h
+  e -->|"はい (コンテナを作り直さない再起動)"| g["gid が異なれば usermod -g、uid が異なれば usermod -u<br/>(uid が使用中なら ERROR + exit 1)"] --> h
+  h["そのイメージにあるグループへ追加: usermod -aG wheel / libvirt / video / render"] --> i{"HOST_PASSWORD_HASH があるか"}
+  i -->|"はい (kvm)"| i1["usermod -p HASH"] --> k
+  i -->|"いいえ (kvm-gui、またはホストにパスワード無し)"| i2["usermod -L (ロック: cockpit ログイン不可)"] --> k
+  k["linger: /var/lib/systemd/linger/USER を作成"] --> l["/home/USER があれば chown -R HOST_UID:HOST_GID"]
 ```
 
-図 19: ユーザー同期。両コンテナで同じスクリプトが動き、`kvm` だけがハッシュを受け取る。初回はテンプレート `admin` をリネームし、
-コンテナを作り直さずに再起動した場合 (`kvm.sh up` は毎回 `podman rm` してイメージから作るので、`podman restart` などに限る) は
-リネーム済みユーザーを対象にする。主グループの gid を変えても `libvirt` グループ (gid 985) への所属は変わらない。
+図 19: GUI ユーザーの作成。両コンテナで同じスクリプトが動き、`kvm` だけがハッシュを受け取る。イメージには一般ユーザーが
+入っていないので、通常の起動では毎回ここで新規作成する (`kvm.sh up` は毎回 `podman rm` してイメージから作る)。
+uid/gid の再調整は `podman restart` のようにコンテナを作り直さずに再起動した場合の経路。
+主グループの gid を変えても `libvirt` グループ (gid 985) への所属は変わらない。
 linger は `loginctl enable-linger` と同じ効果を logind 起動前に得るため、ファイルを直接作る。
 
 ### 5.5 各 unit と設定の仕様
@@ -1160,7 +1154,7 @@ shellcheck kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup 
 | `down` | ホストに `virbr0` と dnsmasq と `/run/kvm-container` が残らない。`down` → `up` で VM 定義とディスクが復元される |
 | `COCKPIT_PORT` | 使用中のポートを指定すると `up` が中止する。`firefox` が開く URL が新しいポートに追従する |
 | `install-desktop` / `launch` | Activities から起動できる。`kvm-gui` 未起動時と sudo 失敗時に通知が出る |
-| パスワード | ホストユーザーのパスワードで cockpit にログインできる。`admin` ではログインできない。`podman run` のコマンドラインにハッシュが出ない。`kvm-gui` 内の `/etc/shadow` でユーザーがロックされている |
+| パスワード | ホストユーザーのパスワードで cockpit にログインできる。コンテナには他に一般ユーザーが居ない。`podman run` のコマンドラインにハッシュが出ない。`kvm-gui` 内の `/etc/shadow` でユーザーがロックされている |
 | ロール引数 | `up kvm` は `kvm-gui` を起動しない。ディスプレイ無しで `up gui` は exit 1。`build gui` は `gui` イメージだけを作る |
 
 ## 付録 A. ファイル一覧とコンテナ内配置
@@ -1195,7 +1189,7 @@ shellcheck kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup 
 | 3 | 永続化を named volume からホストディレクトリのバインドマウントに変更 (seed 処理) | 4.6 |
 | 5 | `install-desktop` / `launch` の追加 | 4.7 |
 | 8 | Quadlet / sudoers 配置の廃止、コンテナ名・イメージ名・データディレクトリを固定値に | 1.3、3.3 |
-| 9 | cockpit にホストのユーザー名・パスワードでログインできるように (テンプレートユーザーのリネーム、ハッシュの env-file 渡し) | 4.3、5.4、7 |
+| 9 | cockpit にホストのユーザー名・パスワードでログインできるように (ホストユーザーの写しを作る、ハッシュの env-file 渡し) | 4.3、5.4、7 |
 | 10 | ホストの runtime dir を読み取り専用の別パスにマウント。cockpit ログアウトでホストの `/run/user/UID` が消える問題を修正。GUI ユーザーの linger | 4.4、5.3、6 |
 | 11 | `NetworkManager-wait-online.service` をマスク。起動完了が 1 分遅れて degraded になるのを防ぐ | 3.4 |
 | 12 | WSL2 専用処理を `host/wsl.sh` に分離 (`host_*` フック) | 2.1、5.6 |
@@ -1204,3 +1198,4 @@ shellcheck kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup 
 | 15 | 物理 AlmaLinux 10 対応: seed の `label=disable`、`iscsid.socket` のマスク、cockpit 既定ポート 9091、ポート使用中の検出、firefox の URL をポートに追従 | 2.4、3.4、4.5 |
 | 16 | CLAUDE.md の追加 | |
 | 18 | コンテナをサーバ `kvm` とデスクトップクライアント `kvm-gui` に分割。マルチステージ Containerfile、`container/{common,kvm,gui}/`、共有 `/run/libvirt` とソケット権限による認証 (`auth_unix_rw = "none"`、`libvirt` の gid 固定)、`kvm-libvirt-conf.service`、`kvm.sh` のロール引数、セッション判定による `kvm-gui` だけの作り直し、ハッシュは `kvm` にだけ渡す | 1.1、3.2〜3.5、4.1、4.3、4.4、5.1、5.2、6 |
+| 20 | イメージのテンプレートユーザー `admin` を廃止し、`gui-user-setup` が起動時に GUI ユーザーを作成する。`data/home` の seed 元は `/etc/skel` | 3.4、4.6、5.3、5.4 |
