@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## このリポジトリについて
 
-qemu-kvm / libvirt / cockpit / firefox / virt-manager を 2 つの systemd コンテナ (podman, root) に収め、軽量なホストで VM を動かして
+qemu-kvm / libvirt / cockpit / firefox / virt-viewer を 2 つの systemd コンテナ (podman, root) に収め、軽量なホストで VM を動かして
 その画面をホストのデスクトップ (WSLg / GNOME Wayland) に表示するためのもの。
-`kvm` (libvirt + qemu-kvm + cockpit、`--privileged --network host`) がサーバ、`kvm-gui` (firefox / virt-manager / virt-viewer、非特権、
+`kvm` (libvirt + qemu-kvm + cockpit、`--privileged --network host`) がサーバ、`kvm-gui` (firefox / virt-viewer、非特権、
 ディスプレイのあるホストだけ) がデスクトップクライアントで、`kvm-gui` は共有した `/run/libvirt` のソケット経由で `kvm` の libvirt に接続する。
 中身は **シェルスクリプト + Containerfile + systemd unit** だけで、ビルドシステムもテストスイートも無い。
 
@@ -83,7 +83,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
   `renderD*` を 0666 にする。非特権なので `/run/user/<uid>` の tmpfs マウントは失敗し、systemd がディレクトリ作成にフォールバックする (想定内)。
 - **再ログイン後は `kvm-gui` だけ作り直す**: `start_gui` は `GUI_ARGS` のハッシュを `kvm.gui-session` ラベルに記録し、`up` のたびに
   ラベルと、コンテナ内で Wayland ソケット / XAUTHORITY がまだ存在するか (再ログインで古い runtime dir がマウントに残って中身だけ消える) を
-  確かめて、違えば `rm -f` して作り直す。`firefox` / `virt-manager` / `viewer` は必ず `up` を経由する。
+  確かめて、違えば `rm -f` して作り直す。`firefox` / `viewer` は必ず `up` を経由する。
 - **`--network host` の帰結** (両コンテナ): cockpit はホストで直接 listen するので `podman -p` は使えず、
   `cockpit-listen-generator` が `cockpit.socket` の `ListenStream` を書き換える。既定ポートは 9090 ではなく **9091**
   (AlmaLinux 10 のホストは自前の `cockpit.socket` で 9090 を使っていることが多い)。

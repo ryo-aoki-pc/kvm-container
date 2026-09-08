@@ -1,6 +1,6 @@
 # qemu-kvm コンテナ 仕様書
 
-本書は、このリポジトリ (qemu-kvm / libvirt / cockpit / firefox / virt-manager を 2 つの systemd コンテナに収め、
+本書は、このリポジトリ (qemu-kvm / libvirt / cockpit / firefox / virt-viewer を 2 つの systemd コンテナに収め、
 軽量なホストで VM を動かしてその画面をホストのデスクトップに表示する仕組み) の **現状の実装 (as-built) を仕様として記述したもの**です。
 
 | 項目 | 内容 |
@@ -35,7 +35,7 @@
 | コンテナ | 役割 | 権限 | 寿命 |
 | --- | --- | --- | --- |
 | `kvm` | サーバ: libvirt + qemu-kvm + virt-install + cockpit (machines / storaged) | `--privileged --network host` | VM が動いている間は常駐 |
-| `kvm-gui` | デスクトップクライアント: firefox / virt-manager / virt-viewer / virsh をホストの画面に表示 | 非特権 (`--security-opt label=disable`、`--network host`) | ディスプレイのあるホストだけ。ホストの再ログイン後はこれだけ作り直す |
+| `kvm-gui` | デスクトップクライアント: firefox / virt-viewer / virsh をホストの画面に表示 | 非特権 (`--security-opt label=disable`、`--network host`) | ディスプレイのあるホストだけ。ホストの再ログイン後はこれだけ作り直す |
 
 `kvm-gui` は両コンテナが共有する `/run/libvirt` の unix ソケット経由で `kvm` の libvirt に接続する。ディスプレイの無いホストでは
 `kvm` だけを使い、cockpit の Web コンソール (noVNC) で VM を扱う (GUI イメージのビルドも不要)。
@@ -53,7 +53,7 @@ flowchart LR
     cockpit["cockpit + cockpit-machines"]
   end
   subgraph gui ["コンテナ kvm-gui (非特権、ディスプレイのあるホストだけ)"]
-    apps["firefox / virt-manager / virt-viewer / virsh"]
+    apps["firefox / virt-viewer / virsh"]
   end
   wsl --> sh
   gnome --> sh
@@ -111,7 +111,7 @@ flowchart TD
   chk -->|"いいえ"| G
   W --> hd{"have_display: KVM_HOST が headless でなく、<br/>DISPLAY か WAYLAND_DISPLAY が設定されている"}
   G --> hd
-  hd -->|"いいえ"| H["kvm だけ<br/>up: >> no display found: GUI disabled, use cockpit in a browser<br/>up gui: !! no display found ... で exit 1<br/>firefox / virt-manager / viewer: !! no display found ... で exit 2"]
+  hd -->|"いいえ"| H["kvm だけ<br/>up: >> no display found: GUI disabled, use cockpit in a browser<br/>up gui: !! no display found ... で exit 1<br/>firefox / viewer: !! no display found ... で exit 2"]
   hd -->|"はい"| D["kvm + kvm-gui (ホストのセッションを kvm-gui へ渡す。4.4 節)"]
 ```
 
@@ -193,7 +193,7 @@ flowchart LR
     gpid1["systemd (PID 1)<br/>environ にホストから渡された値、ラベル kvm.gui-session"]
     guser["gui-user.service (ハッシュ無し)"]
     glogind["systemd-logind → user@UID.service<br/>/run/user/UID (通常のディレクトリ)"]
-    gapp["gui → firefox / virt-manager / virt-viewer / virsh"]
+    gapp["gui → firefox / virt-viewer / virsh"]
     gpid1 --> guser
     gpid1 --> glogind
     gpid1 --> gapp
@@ -224,13 +224,13 @@ cockpit の listen も VM の VNC もホスト上に現れ、`kvm-gui` の firef
 flowchart TB
   subgraph L1 ["層 1: ホスト側 (sudo podman を呼ぶだけ)"]
     kvmsh["kvm.sh"] --- wsl["host/wsl.sh (無条件に source、WSL2 のときだけフックを上書き)"]
-    tmpl["desktop/kvm-virt-manager.desktop / kvm-firefox.desktop (テンプレート)"]
+    tmpl["desktop/kvm-firefox.desktop (テンプレート)"]
   end
   subgraph L2 ["層 2: イメージ (Containerfile、1 ファイルのマルチステージ)"]
     base["base: 10-minimal + shadow-utils / systemd / dbus-daemon / hostname / locale<br/>libvirt グループを gid 985 で固定、両イメージ共通の unit マスク"]
     common["common: gui-user.service / gui-user-setup (GUI ユーザーを起動時に作成)<br/>systemd-logind の unmask"]
     kvmimg["kvm (--target kvm → localhost/kvm-container/kvm)<br/>libvirt / qemu-kvm / virt-install / cockpit、sudoers、libvirtdbus を libvirt グループへ"]
-    guiimg["gui (--target gui → localhost/kvm-container/gui)<br/>EPEL、firefox / virt-viewer / virt-manager / libvirt-client、フォント、video / render グループ"]
+    guiimg["gui (--target gui → localhost/kvm-container/gui)<br/>firefox / virt-viewer / libvirt-client、フォント、video / render グループ"]
     base --> common
     common --> kvmimg
     common --> guiimg
@@ -264,7 +264,7 @@ flowchart TB
 | `container/kvm/cockpit-listen-generator` | コンテナ | kvm | `COCKPIT_LISTEN` を `cockpit.socket` の `ListenStream` に反映 | 起動時 (systemd generator、unit 読み込み前) |
 | `container/kvm/cockpit.conf` | コンテナ | kvm | cockpit-ws の設定 | cockpit-ws 起動時に読まれる |
 | `container/kvm/kvm-net-teardown.service` | コンテナ | kvm | 停止時に libvirt ネットワークを `net-destroy` | 停止時 (`ExecStop`) |
-| `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh firefox` / `virt-manager` / `viewer` / `launch` から `podman exec` |
+| `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh firefox` / `viewer` / `launch` から `podman exec` |
 
 ### 3.3 コンテナ実行仕様 (`podman run`)
 
@@ -292,11 +292,10 @@ flowchart TB
 | --- | --- | --- |
 | `-d --name kvm-gui --hostname kvm-gui` | 固定 | コンテナ名・ホスト名 |
 | `--systemd=always` | 固定 | `/sbin/init` を PID 1 として動かす。**`--privileged` は付けない** |
-| `--network host` | 固定 | firefox が `localhost` の cockpit に、virt-viewer / virt-manager が VM の VNC (ホストの loopback) に届くため。listen するものは無い |
+| `--network host` | 固定 | firefox が `localhost` の cockpit に、virt-viewer が VM の VNC (ホストの loopback) に届くため。listen するものは無い |
 | `--security-opt label=disable` | 固定 | SELinux Enforcing のホストで、特権コンテナが作った unix ソケットへ connect し、ホストの runtime dir を読むため |
 | `--label kvm.gui-session=<セッション ID>` | `GUI_ARGS` の SHA-256 先頭 16 桁 | 再ログインの検出 (5.1 節) |
 | `-e COCKPIT_LISTEN=<COCKPIT_BIND>:<COCKPIT_PORT>` | 同上 | `gui` が firefox に渡す cockpit の URL のポート |
-| `-v data/var-libvirt:/var/lib/libvirt:ro` | ro | virt-manager の「ローカルを参照」用 |
 | `-v data/home:/home/<HOST_USER>` | rw | firefox プロファイル等 (`kvm` と同じホーム) |
 | `-v /run/kvm-container/libvirt:/run/libvirt` | rw | libvirt ソケットの共有 |
 | `HOST_ARGS` | `-e HOST_USER= -e HOST_UID= -e HOST_GID=` | ホストユーザーの写し (ハッシュは渡さない) |
@@ -311,7 +310,7 @@ flowchart TB
 | `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`shadow-utils` (minimal には無い) を先に入れ、`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。続けて `systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `hostname` `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
 | `common` | `base` | `gui-user.service` / `gui-user-setup` を配置して enable (一般ユーザーはイメージに焼き込まず、起動時に作る)。`systemd-logind.service` を unmask |
 | `kvm` | `common` | `passwd` `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install` `cockpit` `cockpit-machines` `cockpit-storaged`。`/etc/sudoers.d/wheel-nopasswd` (0440): `%wheel ALL=(ALL) NOPASSWD: ALL`。`usermod -aG libvirt libvirtdbus`。`container/kvm/*` を配置し、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6)。`EXPOSE 9091` |
-| `gui` | `common` | `epel-release` → `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`virt-manager` は `epel-release` が有効にする CRB リポジトリから (無ければ `virt-manager is not available, skipping`)。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
+| `gui` | `common` | `firefox` `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
 
 パッケージ方針は「依存で入らないものだけを、それが来るステージに列挙する」。`microdnf --setopt=install_weak_deps=0` (`False/True` は不可)。
 
@@ -332,8 +331,7 @@ flowchart LR
   subgraph gui ["gui"]
     g1["firefox"]
     g2["virt-viewer / libvirt-client (virsh)"]
-    g3["virt-manager (EPEL、失敗許容)"]
-    g4["util-linux-core (runuser / setsid) / dejavu-sans-fonts / google-noto-sans-cjk-vf-fonts / tar"]
+    g3["util-linux-core (runuser / setsid) / dejavu-sans-fonts / google-noto-sans-cjk-vf-fonts / tar"]
   end
   subgraph deps ["依存で入る主なもの (明示しない)"]
     qemu["qemu-kvm / qemu-img / edk2-ovmf / swtpm / util-linux"]
@@ -386,7 +384,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   subgraph gui ["kvm-gui (kvm とは別の pid 名前空間)"]
-    app["virt-manager / virt-viewer / virsh<br/>GUI ユーザー: libvirt グループ (gid 985) の一員"]
+    app["virt-viewer / virsh<br/>GUI ユーザー: libvirt グループ (gid 985) の一員"]
   end
   subgraph shared ["ホストの /run/kvm-container/libvirt = 両コンテナの /run/libvirt"]
     sock["virtqemud-sock など<br/>srw-rw---- root:libvirt<br/>(virtd-socket.conf: SocketMode=0660 SocketGroup=libvirt)"]
@@ -430,12 +428,12 @@ flowchart LR
 | `up [kvm\|gui]` | 追加引数があれば usage で 1 | 2 章の要件 | 省略: `start_kvm` → `have_display` なら `start_gui`、無ければ `>> no display found: GUI disabled, use cockpit in a browser`。`kvm`: `start_kvm` のみ。`gui`: `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed` で 1、あれば `start_gui` のみ (5.1 節) | `kvm` の readiness が 30 秒で確認できなければ `!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell` で 1 |
 | `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` → `kvm` の順に `podman rm -f -i -t 10`、さらに `sudo rm -rf /run/kvm-container`。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman の終了コード |
 | `clean` | 無し | | `kvm.sh down` (両方) → `data/` が無ければ `>> ... does not exist` で 0 → 削除対象と `du -sh` を表示 → `KVM_CLEAN_YES=1` でなければ `This deletes the VM disks and definitions as well. Continue? [y/N]` を尋ね、`y`/`Y` 以外は `>> aborted` で 1 → `sudo rm -rf data/` | 上記 |
-| `firefox` / `virt-manager` | 追加引数 (アプリへ渡す) | ディスプレイ | `have_display` でなければ `!! no display found: use cockpit in a browser (https://BIND:PORT)` で 2。`kvm.sh up` (足りないものを起動し、再ログイン後は `kvm-gui` を作り直す) → `podman exec kvm-gui gui <cmd> "$@"` | `gui` の終了コード |
+| `firefox` | 追加引数 (アプリへ渡す) | ディスプレイ | `have_display` でなければ `!! no display found: use cockpit in a browser (https://BIND:PORT)` で 2。`kvm.sh up` (足りないものを起動し、再ログイン後は `kvm-gui` を作り直す) → `podman exec kvm-gui gui <cmd> "$@"` | `gui` の終了コード |
 | `viewer <VM名>` | VM 名 (virt-viewer の引数) | 同上 | 同上。`viewer` を `virt-viewer` に読み替えて `gui virt-viewer <VM名>` | 同上 |
 | `virsh ...` | virsh の引数 | `kvm` 起動中 | `podman exec -it kvm virsh -c qemu:///system "$@"` | virsh の終了コード |
 | `shell [kvm\|gui]` | ロール省略で `kvm` | 起動中 | `podman exec -it <container> bash` | bash の終了コード |
 | `logs [kvm\|gui]` | ロール省略で両方 | | `kvm`: 起動中なら `journalctl --no-pager -n 30 -u kvm-libvirt-conf -u virtqemud -u cockpit.socket -u gui-user`、でなければ `>> kvm is not running`。`gui`: 起動中なら `/var/log/gui.log` 末尾 50 行 + `journalctl -n 30 -u gui-user`、でなければ `>> kvm-gui is not running` | |
-| `launch <app>` | `firefox` または `virt-manager` | `.desktop` から呼ばれる。podman の NOPASSWD sudo | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
+| `launch <app>` | `firefox` | `.desktop` から呼ばれる。podman の NOPASSWD sudo | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
 | `install-desktop` | 無し | root 以外、デスクトップにログインしたユーザー | `gui` イメージが無ければ `build gui`。アイコン抽出と `.desktop` 配置 (4.7 節) | 0 |
 | `uninstall-desktop` | 無し | root 以外 | `.desktop` とアイコンを削除 | 0 |
 
@@ -538,7 +536,6 @@ flowchart LR
     ku["/run/user/UID (logind の tmpfs、ホストとは無関係)"]
   end
   subgraph g ["kvm-gui"]
-    g1["/var/lib/libvirt (ro)"]
     g3["/home/USER (rw)"]
     g4["/run/libvirt (rw)"]
     crt["/run/host-xdg-runtime (ro)"]
@@ -549,7 +546,6 @@ flowchart LR
     gu["/run/user/UID (logind。非特権なので通常のディレクトリ)"]
   end
   d1 -->|"-v rw"| k1
-  d1 -->|"-v ro"| g1
   d2 -->|"-v rw"| k2
   d3 -->|"-v rw"| k3
   d3 -->|"-v rw"| g3
@@ -569,7 +565,6 @@ flowchart LR
 | ホスト | コンテナ | モード | 条件 | 目的 |
 | --- | --- | --- | --- | --- |
 | `data/var-libvirt` | `kvm` `/var/lib/libvirt` | rw | 常に | ディスクイメージ、ISO |
-| `data/var-libvirt` | `kvm-gui` `/var/lib/libvirt` | ro | GUI 有効 | virt-manager の「ローカルを参照」用 |
 | `data/etc-libvirt` | `kvm` `/etc/libvirt` | rw | 常に | VM 定義、ネットワーク定義、libvirt の設定 (`kvm-gui` には無い) |
 | `data/home` | 両方 `/home/<HOST_USER>` | rw | 常に | firefox プロファイル等。1 つのホームを両方で使う |
 | `/run/kvm-container/libvirt` | 両方 `/run/libvirt` | rw | 常に | libvirt のソケット共有 (3.5 節) |
@@ -622,7 +617,7 @@ flowchart LR
     ccock["kvm の cockpit-ws<br/>COCKPIT_BIND:COCKPIT_PORT (既定 127.0.0.1:9091)"]
     vnc["qemu の VNC (ホストの loopback で listen)"]
     ipf["net.ipv4.ip_forward=1 (kvm-perms.service が設定)"]
-    gapps["kvm-gui の firefox / virt-viewer / virt-manager (listen するものは無い)"]
+    gapps["kvm-gui の firefox / virt-viewer (listen するものは無い)"]
   end
   subgraph vms ["VM (qemu-kvm、tap デバイス)"]
     vmA["network=default の VM"]
@@ -685,13 +680,13 @@ flowchart TD
 ```mermaid
 sequenceDiagram
   participant S as GNOME Shell (Activities)
-  participant D as kvm-firefox.desktop / kvm-virt-manager.desktop
+  participant D as kvm-firefox.desktop
   participant K as kvm.sh launch app
   participant P as sudo -n podman exec kvm-gui
   participant G as gui (kvm-gui 内)
   participant N as 通知 (notify-send、無ければ zenity、無ければ stderr のみ)
   S->>D: 起動 (TryExec で kvm.sh の存在を確認、無ければ非表示)
-  D->>K: Exec = kvm.sh (絶対パス) launch firefox または virt-manager
+  D->>K: Exec = kvm.sh (絶対パス) launch firefox
   K->>P: gui app (stderr を err に取り込む)
   alt sudo がパスワードを要求 (err に password を含む)
     P-->>K: 失敗
@@ -711,15 +706,15 @@ sequenceDiagram
 
 | 項目 | 仕様 |
 | --- | --- |
-| 配置先 | `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kvm-virt-manager.desktop`、`kvm-firefox.desktop`。アイコンは同 `icons/hicolor/<size>/apps/{virt-manager,firefox}.*` |
+| 配置先 | `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kvm-firefox.desktop`。アイコンは同 `icons/hicolor/<size>/apps/firefox.*` |
 | テンプレート置換 | `desktop/kvm-<app>.desktop` の `@KVM_SH@` を `<リポジトリ>/kvm.sh` (絶対パス) に置換 (`sed`)。リポジトリを移動したら再実行が必要 |
-| `.desktop` の主要キー | `TryExec=@KVM_SH@` (無ければエントリ非表示)、`Exec="@KVM_SH@" launch <app>`、`Icon=firefox` / `virt-manager`、`StartupWMClass=firefox` / `virt-manager`、`Terminal=false`、`Name[ja]` / `Comment[ja]` / `Keywords` の日本語 |
-| アイコン抽出 | `gui` イメージの一時コンテナ (`--rm --network none`) で `/usr/share/icons/hicolor` から `apps/virt-manager.*` と `apps/firefox.*` だけを `tar` で取り出す。失敗しても続行 (汎用アイコンになる旨を表示) |
-| virt-manager 不在 | `gui` イメージに `/usr/bin/virt-manager` が無ければ `>> virt-manager is not in the image; skipping kvm-virt-manager.desktop` |
+| `.desktop` の主要キー | `TryExec=@KVM_SH@` (無ければエントリ非表示)、`Exec="@KVM_SH@" launch firefox`、`Icon=firefox`、`StartupWMClass=firefox`、`Terminal=false`、`Name[ja]` / `Comment[ja]` / `Keywords` の日本語 |
+| アイコン抽出 | `gui` イメージの一時コンテナ (`--rm --network none`) で `/usr/share/icons/hicolor` から `apps/firefox.*` だけを `tar` で取り出す。失敗しても続行 (汎用アイコンになる旨を表示) |
+| 旧エントリの掃除 | `install-desktop` / `uninstall-desktop` は、以前のリビジョンが入れた `kvm-virt-manager.desktop` と `icons/hicolor/*/apps/virt-manager.*` を削除する (`remove_legacy_desktop`) |
 | 後処理 | `update-desktop-database -q` (あれば)。配置先と Activities での検索語を表示 |
-| `launch` の前提 | 実行ユーザーが `sudo -n podman` を実行できること。`launch` は `firefox` / `virt-manager` 以外を拒否する |
+| `launch` の前提 | 実行ユーザーが `sudo -n podman` を実行できること。`launch` は `firefox` 以外を拒否する |
 | 通知 | `notify-send -a kvm.sh -i dialog-error "kvm-container" "<本文>"` → 無ければ `zenity --error --title=kvm-container --text=<本文>` → どちらも無ければ stderr のみ |
-| 解除 | `uninstall-desktop` が `.desktop` 2 つと `icons/hicolor/*/apps/{virt-manager,firefox}.*` を削除 |
+| 解除 | `uninstall-desktop` が `.desktop` と `icons/hicolor/*/apps/firefox.*` を削除 |
 
 ### 4.8 ログとメッセージの規約
 
@@ -768,7 +763,7 @@ sequenceDiagram
   K->>P: podman run kvm-gui (非特権、label=disable、--label kvm.gui-session、HOST_ARGS + GUI_ARGS)
   P->>G: /sbin/init
   G->>G: sysinit: gui-user (リネーム、ハッシュ無しでロック、linger) → logind → user@UID
-  K-->>U: kvm-gui started. host display: ./kvm.sh firefox / ./kvm.sh virt-manager
+  K-->>U: kvm-gui started. host display: ./kvm.sh firefox / ./kvm.sh viewer <VM>
 ```
 
 図 14: 起動シーケンス。`kvm` の起動と readiness 確認が終わってから `kvm-gui` を起動する。`kvm-gui` 側には readiness 待ちが無く、
@@ -786,7 +781,7 @@ flowchart TD
   e -->|"いいえ"| c2[">> the host session has changed: recreating kvm-gui<br/>(the kvm container and its VMs keep running)"]
   c2 --> c["host_user_args、gui イメージが無ければ build gui、podman rm -f -i kvm-gui<br/>sudo mkdir -p /run/kvm-container/libvirt、data/var-libvirt、data/home"]
   c --> run["podman run kvm-gui ... --label kvm.gui-session=session"]
-  run --> msg[">> kvm-gui started. host display: ./kvm.sh firefox | ./kvm.sh virt-manager"]
+  run --> msg[">> kvm-gui started. host display: ./kvm.sh firefox | ./kvm.sh viewer &lt;VM&gt;"]
 ```
 
 図 15: `start_gui` とセッション一致判定 (`gui_session_matches`)。ラベルの一致だけでは足りない (再ログイン後もソケットのパスが
@@ -830,7 +825,7 @@ logind が `/var/lib/systemd/linger` を起動時にしか読まないため。`
 | --- | --- |
 | `kvm` 起動、`COCKPIT_BIND` が `0.0.0.0` または `::` | `>> ready. cockpit: https://$(uname -n):PORT  (log in with your host user: USER)` と firewalld の `--add-port` 案内 |
 | `kvm` 起動、それ以外 | `>> ready. cockpit: https://COCKPIT_BIND:PORT  (log in with your host user: USER)` |
-| `kvm-gui` を (再) 作成 | `>> kvm-gui started. host display: ./kvm.sh firefox \| ./kvm.sh virt-manager` |
+| `kvm-gui` を (再) 作成 | `>> kvm-gui started. host display: ./kvm.sh firefox \| ./kvm.sh viewer <VM>` |
 | `kvm-gui` が現セッション用に起動中 | `>> kvm-gui is already running` |
 | ディスプレイ無し (`up` 引数なし) | `>> no display found: GUI disabled, use cockpit in a browser` |
 
@@ -894,7 +889,7 @@ flowchart TD
   u --> l["exec setsid -f runuser -u USER -- cmd<br/>stdout / stderr は /var/log/gui.log に追記"]
 ```
 
-図 18: `gui` の処理。GUI アプリは **コンテナの** `/run/user/UID` と session bus を使い (virt-manager の単一インスタンス化に必要)、
+図 18: `gui` の処理。GUI アプリは **コンテナの** `/run/user/UID` と session bus を使い (GTK アプリがこの 2 つを前提にする)、
 ホストの runtime dir はソケットへの connect にだけ使う。libvirt へは `/run/libvirt` の共有ソケットで届く (`qemu:///system`)。
 `runuser` は `--login` 無しなので環境がそのまま渡り、そのためにホストユーザーの情報を先に `unset` する
 (`kvm-gui` にハッシュは渡っていないが、同じコードで消す)。
@@ -1037,7 +1032,7 @@ flowchart LR
 | コンテナをまたぐ libvirt 接続は `auth_unix_rw = "none"` + ソケット権限 `root:libvirt 0660` で制御し、`libvirt` の gid は `base` 段で固定する | `container/kvm/libvirt-conf`、`virtd-socket.conf`、`Containerfile` `LIBVIRT_GID` | 3.5 節。socket 起動では `.socket` unit の設定が権限を決める。`kvm-libvirt-conf.service` が起動ごとに冪等に書く (Containerfile で sed しない) |
 | `/run/libvirt` はホストの `/run/kvm-container/libvirt` を両コンテナにバインドマウントしたもの。`start_kvm` が中身だけ空にし、`down` (引数なし) で消す | `kvm.sh` `start_kvm` / `down` | ディレクトリ自体は消さない (起動中の `kvm-gui` のマウントを壊さない) |
 | `kvm-gui` は `--privileged` ではないが `--security-opt label=disable` | `kvm.sh` `start_gui` | SELinux Enforcing のホストで特権コンテナ (spc_t) のソケットへ connect し、ホストの runtime dir (user_tmp_t) を読むため。`/dev/dri` は `--device` で渡し、`gui` が `renderD*` を 0666 にする |
-| 再ログイン後は `kvm-gui` だけ作り直す | `kvm.sh` `start_gui` / `gui_session_matches` | `GUI_ARGS` のハッシュをラベル `kvm.gui-session` に記録し、ラベルとコンテナ内のソケット実在の両方で判定する。`firefox` / `virt-manager` / `viewer` は必ず `up` を経由する |
+| 再ログイン後は `kvm-gui` だけ作り直す | `kvm.sh` `start_gui` / `gui_session_matches` | `GUI_ARGS` のハッシュをラベル `kvm.gui-session` に記録し、ラベルとコンテナ内のソケット実在の両方で判定する。`firefox` / `viewer` は必ず `up` を経由する |
 | `--network host` の帰結を守る (両コンテナ): 既定ポート 9091、`iscsid.socket` / `iscsiuio.socket` / `NetworkManager.service` / `NetworkManager-wait-online.service` のマスク、停止時の `kvm-net-teardown` | `kvm.sh` `COCKPIT_PORT` / `check_host_network`、`Containerfile` `base`、`kvm-net-teardown.service` | `podman -p` は使えないので generator で `ListenStream` を書き換える |
 | GUI/cockpit ユーザーはホストユーザーの写し (名前・uid/gid、`kvm` ではパスワードハッシュも)。`kvm.sh` は root で実行させない | `host_user_args`、`gui-user-setup` | ホストの runtime dir は 0700 なので uid 一致が必要。cockpit は `kvm` の `/etc/shadow` で認証する。ハッシュは `kvm` にだけ渡す |
 | `data/` は空のときだけ `kvm` イメージから seed し、seed コンテナは `--security-opt label=disable` | `prepare_data_dir` | バインドマウントはイメージの内容をコピーしないため。`data/var-libvirt` は `kvm-gui` に ro で見せる |
@@ -1070,11 +1065,10 @@ flowchart LR
 | SPICE 非対応 | RHEL 10 系の qemu-kvm に SPICE が無く、VM のグラフィックスは VNC |
 | cockpit の「ネットワーク」ページ | コンテナ内の NetworkManager がマスクされているため使えない |
 | cockpit は `kvm` 側 | cockpit-machines の hard Requires により分離できない。`kvm-gui` の firefox は `localhost` の cockpit を開くだけ |
-| ホストの再ログイン | GNOME からログアウト/再ログインすると `/run/user/UID` が作り直され、`kvm-gui` に渡した Wayland ソケットのパスが無効になる。`./kvm.sh up` (または `firefox` / `virt-manager` / `viewer`) が `kvm-gui` だけを作り直す。`kvm` と VM は動いたまま |
+| ホストの再ログイン | GNOME からログアウト/再ログインすると `/run/user/UID` が作り直され、`kvm-gui` に渡した Wayland ソケットのパスが無効になる。`./kvm.sh up` (または `firefox` / `viewer`) が `kvm-gui` だけを作り直す。`kvm` と VM は動いたまま |
 | パスワード変更の反映 | ホストでパスワードを変えても起動中の `kvm` には反映されない。`down kvm` → `up` |
 | headless での GUI | `kvm.sh firefox` 等は `have_display` の判定で exit 2、`up gui` は exit 1。cockpit をブラウザで使う |
 | `kvm-gui` の `/run/user/UID` | 非特権なので tmpfs にならず `/run` 直下の通常のディレクトリ (systemd のフォールバック、想定内) |
-| virt-manager | EPEL に無い環境では `gui` イメージに入らず、`install-desktop` は `.desktop` をスキップする |
 | WSLg のスタートメニュー | `~/.local/share/applications` の `.desktop` は Windows のスタートメニューに反映されるはずだが未検証 |
 | 1 コンテナ構成からの移行 | 旧構成の `kvm` コンテナは `/run/libvirt` を共有していないので、`./kvm.sh down` で消してから `./kvm.sh build && ./kvm.sh up` する。旧イメージ `localhost/qemu-kvm-cockpit` は `sudo podman rmi` で消せる。`data/` はそのまま使える (`kvm-libvirt-conf.service` が設定を更新する) |
 | 起動確認のタイムアウト | `kvm` の readiness は 30 秒固定。遅いホストでは `could not confirm startup` になり得る (コンテナ自体は起動を続ける)。`kvm-gui` には readiness 待ちが無い |
@@ -1092,11 +1086,11 @@ stateDiagram-v2
   NoImage --> Both : kvm.sh up (ディスプレイあり)
   NoData --> Kvm : kvm.sh up (seed)
   Down --> Kvm : kvm.sh up (ディスプレイ無し) / up kvm
-  Down --> Both : kvm.sh up (ディスプレイあり) / firefox / virt-manager / viewer
-  Kvm --> Both : kvm.sh up / up gui / firefox / virt-manager / viewer
+  Down --> Both : kvm.sh up (ディスプレイあり) / firefox / viewer
+  Kvm --> Both : kvm.sh up / up gui / firefox / viewer
   Both --> Kvm : kvm.sh down gui
   Both --> Stale : ホストで再ログイン、DISPLAY 等の変更
-  Stale --> Both : kvm.sh up / firefox / virt-manager / viewer (kvm-gui だけ作り直す)
+  Stale --> Both : kvm.sh up / firefox / viewer (kvm-gui だけ作り直す)
   Both --> Down : kvm.sh down
   Kvm --> Down : kvm.sh down
   Stale --> Down : kvm.sh down
@@ -1117,9 +1111,10 @@ stateDiagram-v2
 files="kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf container/kvm/cockpit-listen-generator"
 bash -n $files
 shellcheck $files          # 指摘ゼロを保つ (-S style でもゼロ)
-# shellcheck がホストに無ければ gui イメージの使い捨てコンテナで実行できる:
+# shellcheck がホストに無ければ gui イメージの使い捨てコンテナで実行できる
+# (ShellCheck は EPEL にしかないので、この使い捨てコンテナの中でだけ epel-release を入れる):
 sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
-  sh -c 'microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
+  sh -c 'microdnf -y install epel-release >/dev/null && microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
 ```
 
 ### 9.2 物理 AlmaLinux 10 + GNOME
@@ -1136,7 +1131,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf` | すべて `"none"` | `kvm-libvirt-conf.service` |
 | `sudo podman exec kvm-gui ls -la /dev/dri` | `renderD*` が 0666 | `--device /dev/dri` と `gui` の chmod |
 | `sudo ausearch -m avc -ts recent` | 拒否が無い | SELinux 上の問題が無い |
-| `./kvm.sh virt-manager && ./kvm.sh viewer <VM名>` | GNOME にウィンドウが出て VM のコンソールが見える | session bus、Wayland 接続、共有ソケット経由の VNC |
+| `./kvm.sh viewer <VM名>` | GNOME にウィンドウが出て VM のコンソールが見える | session bus、Wayland 接続、共有ソケット経由の VNC |
 | GNOME 再ログイン後に `./kvm.sh up` | `kvm-gui` だけが作り直され、`./kvm.sh virsh list` の VM が動いたまま | `gui_session_matches` (図 15) |
 | `./kvm.sh down; ip link show virbr0; ls /run/kvm-container` | どちらも残っていない | `kvm-net-teardown` と共有 run dir の削除 |
 
@@ -1167,7 +1162,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | --- | --- | --- | --- | --- |
 | `kvm.sh` | | (ホスト側) | 実行可能 | |
 | `host/wsl.sh` | | (ホスト側、source) | | |
-| `desktop/kvm-firefox.desktop` `desktop/kvm-virt-manager.desktop` | | (ホスト側、`install-desktop` が `~/.local/share/applications/` へ) | | `@KVM_SH@` を置換 |
+| `desktop/kvm-firefox.desktop` | | (ホスト側、`install-desktop` が `~/.local/share/applications/` へ) | | `@KVM_SH@` を置換 |
 | `Containerfile` | | | | マルチステージ: `base` → `common` → `kvm` / `gui` |
 | `container/common/gui-user-setup` | 両方 | `/usr/local/bin/gui-user-setup` | `chmod +x` | |
 | `container/common/gui-user.service` | 両方 | `/etc/systemd/system/gui-user.service` | | `systemctl enable` |
