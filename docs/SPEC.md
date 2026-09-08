@@ -1114,8 +1114,12 @@ stateDiagram-v2
 ### 9.1 静的検査
 
 ```bash
-bash -n kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf
-shellcheck kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf   # 入っていれば
+files="kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf container/kvm/cockpit-listen-generator"
+bash -n $files
+shellcheck $files          # 指摘ゼロを保つ (-S style でもゼロ)
+# shellcheck がホストに無ければ gui イメージの使い捨てコンテナで実行できる:
+sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
+  sh -c 'microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
 ```
 
 ### 9.2 物理 AlmaLinux 10 + GNOME
