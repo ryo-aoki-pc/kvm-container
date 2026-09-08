@@ -22,6 +22,8 @@ qemu-kvm / libvirt / cockpit / firefox / virt-manager を 2 つの systemd コ�
 KVM_HOST=headless ./kvm.sh up      # ホスト種別判定の上書き (auto|wsl|generic|headless)
 COCKPIT_PORT=9092 ./kvm.sh up      # cockpit のポート変更 (既定 9091)
 KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネットワーク "bridged" として登録
+./kvm.sh install-service           # kvm コンテナを Quadlet (kvm-container.service) にする。以後 up/down は systemctl に委譲
+./kvm.sh uninstall-service         # 上記の解除
 ```
 
 検証は自動化されていない。変更後は README 末尾の「確認手順」(物理 AlmaLinux 10 GNOME / Windows + WSL2) を手で流す。
@@ -32,12 +34,14 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 シェルスクリプトを触ったら最低限 `bash -n` と `shellcheck` を
 `kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf container/kvm/cockpit-listen-generator`
 にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/SPEC.md` 9.1 節)。
+Quadlet を触ったら `sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun` と
+`systemctl cat kvm-container.service` で生成結果を確かめる (`docs/SPEC.md` 9.5 節)。
 
 ## 構造
 
 3 層に分かれており、どの層を触るかで影響範囲が変わる。現状実装の仕様書 (図付き) は `docs/SPEC.md`。
 
-1. **ホスト側 (`kvm.sh`, `host/wsl.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
+1. **ホスト側 (`kvm.sh`, `host/wsl.sh`, `quadlet/kvm-container.container`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
    引数 (`GUI_ARGS`) と、ホストユーザーの名前・uid/gid・パスワードハッシュ (`HOST_ARGS`) に変換する。
 2. **イメージ (`Containerfile`)** — AlmaLinux 10 minimal + `microdnf` のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、
@@ -99,6 +103,13 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
   `kvm` イメージで一時コンテナを起こして `cp -a` する (`--security-opt label=disable` が必要: data はユーザーのホーム配下 = `user_home_t`)。
   `data/var-libvirt` → `/var/lib/libvirt` (kvm rw、gui ro)、`data/etc-libvirt` → `/etc/libvirt` (kvm)、
   `data/home` → `/home/<ホストユーザー名>` (両方)。`data/` は git 管理外で root 所有。読み書きには `sudo` がいる。
+- **Quadlet 登録中 (`/etc/containers/systemd/kvm-container.container` がある間) は `kvm` の持ち主は systemd**。`up` / `down` は
+  `systemctl start|stop kvm-container.service` に委譲し、`podman run` / `podman rm` で直接触らない (二重管理の防止)。
+  `kvm-gui` はセッション依存 (`gui_args` のマウント数が可変、`gui_session_matches` の手続き的判定) なので Quadlet 化しない。
+  ユニットの `HOST_USER` / `HOST_UID` / `HOST_GID` は必須で、無いと `gui-user-setup` がユーザーを 1 人も作らず cockpit にログインできない。
+  `ExecStartPost` の `ready` は `-` 前置の非致命 (致命にすると readiness のタイムアウトだけで VM ごとコンテナが破棄される)。
+  `prepare` はイメージをビルドしない (ブートを止めるため)。`reset_run_dir` は古いコンテナを消した**後**に呼ぶ
+  (`kvm-net-teardown` がそこの libvirt ソケット経由で `virbr*` を掃除するため)。
 - コンテナ名は `kvm` と `kvm-gui`、イメージ名は `localhost/kvm-container/{kvm,gui}` に固定 (変数名は `KVM_CONTAINER` / `GUI_CONTAINER` /
   `KVM_IMAGE` / `GUI_IMAGE`。`NAME` は WSL がホスト名に使うため避けている)。
 
@@ -109,4 +120,5 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 - 挙動を変えたら README の該当表・確認手順と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)
   の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
 - 新しいホスト依存の挙動は `host_*` フック経由で足す。新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
-  README の環境変数表の 3 箇所に反映する。
+  README の環境変数表・(ユニットに焼き込むものなら) `quadlet/kvm-container.container` のプレースホルダと
+  `install_service` の `sed` の 4 箇所に反映する。

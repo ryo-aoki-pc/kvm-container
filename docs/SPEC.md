@@ -5,9 +5,9 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 対象コミット | `8197907` (main、PR 18「コンテナをサーバ (kvm) とデスクトップクライアント (kvm-gui) の 2 つに分割する」まで) |
+| 対象コミット | `ec56c6e` + PR 22「`kvm` コンテナを Quadlet 化する」 |
 | 対象読者 | 利用者 (CLI・環境変数・ポート・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `host/wsl.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 出典 | `kvm.sh` `host/wsl.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `quadlet/*` `.gitignore`、README.md、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
 | 他文書との分担 | README.md = 導入手順と使い方、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は README を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名、`PORT` は `COCKPIT_PORT` を表す |
 
@@ -79,6 +79,7 @@ flowchart LR
 | cockpit の「ネットワーク」ページ | コンテナ内の NetworkManager をマスクしている (3.4 節) |
 | cockpit を `kvm-gui` 側に置くこと | RHEL 系の cockpit-machines は qemu-kvm / libvirt-daemon-driver-* / libvirt-dbus を hard Requires しており、分けてもハイパーバイザ一式が付いてくる (PR 18) |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
+| `kvm-gui` の Quadlet 化 | セッション依存 (`gui_args` はソケットの有無でマウントの個数まで変わり、`gui_session_matches` は `podman inspect` とコンテナ内の実在確認を組み合わせた手続き的判定) なので静的な `.container` に書けない。ログイン前に起動しても使えない (3.6 節) |
 | 自動テスト | テストスイートは無い。検証は README 末尾の確認手順を手で流す (9 章) |
 
 ### 1.3 用語
@@ -128,7 +129,7 @@ WSL 判定はフックの上書きだけを決め、GUI の有無は `KVM_HOST=h
 
 | 要件 | 内容 | 確認・処理箇所 |
 | --- | --- | --- |
-| podman | root で利用 (`sudo podman`)。`kvm.sh` のすべての podman 操作は `PODMAN="sudo podman"` 経由 | `kvm.sh` |
+| podman | root で利用。`kvm.sh` のすべての podman 操作は `PODMAN` 経由 (一般ユーザーなら `sudo podman`、root で動く `prepare` / `ready` では `podman`)。Quadlet を使う場合は 4.4 以降 | `kvm.sh` |
 | KVM | CPU 仮想化 (AMD SVM / Intel VT-x)。WSL2 は Windows 側のネストした仮想化。`/dev/kvm` が無ければ `modprobe kvm_amd` (`/proc/cpuinfo` に `AuthenticAMD`) または `kvm_intel` を試み、それでも無ければ `host_kvm_missing_hint` を出して exit 1 | `ensure_kvm` (`start_kvm` から) |
 | `modprobe` | `/dev/kvm` が無いときに必要。無ければ `!! modprobe not found: sudo dnf install kmod` で exit 1 | `ensure_kvm` |
 | WSL | 2.5.1 以降 (cgroup v2 が既定)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く) | README |
@@ -137,12 +138,14 @@ WSL 判定はフックの上書きだけを決め、GUI の有無は `KVM_HOST=h
 | SELinux | Enforcing のままで可。`kvm` は `--privileged`、`kvm-gui` と seed 用コンテナは `--security-opt label=disable` で、いずれもラベル分離無し | `start_kvm` / `start_gui` / `prepare_data_dir` |
 | ホストの `/run` | `/run/kvm-container/libvirt` を作れること (tmpfs 上、`sudo`) | `start_kvm` / `start_gui` |
 | リポジトリの位置 | ユーザーのホーム配下にクローンする。`data/` はその中に作られる (`KVM_DATA_DIR=$PWD/data`) | `kvm.sh` |
+| systemd (Quadlet を使う場合) | PID 1 が systemd であること。`install-service` は `/run/systemd/system` が無ければ `!! systemd is not running on this host, so Quadlet cannot be used (WSL2: set [boot] systemd=true in /etc/wsl.conf)` で exit 1 | `install_service` |
+| リポジトリのマウント (ブート時起動の場合) | ブート時にリポジトリのファイルシステムがマウント済みであること。ユニットの `RequiresMountsFor=<リポジトリ>` が待つが、ログイン時に復号されるホーム (systemd-homed / fscrypt / eCryptfs) は待てないので `/home` の外に置く (8 章) | `quadlet/kvm-container.container` |
 
 ### 2.3 実行ユーザーの要件
 
 | 要件 | 振る舞い |
 | --- | --- |
-| root で実行しない | `host_user_args` が uid 0 を検出すると `!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)` で exit 1。`install-desktop` / `uninstall-desktop` も root を拒否する |
+| root で実行しない | `host_user_args` が uid 0 を検出すると `!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)` で exit 1。`install-desktop` / `uninstall-desktop` / `install-service` / `uninstall-service` も root を拒否する。例外は `prepare` / `ready` で、これらは `kvm-container.service` が root で実行する唯一のサブコマンド (`host_user_args` を通らない)。root では対象のホストユーザーが分からないので、ユニットが `HOST_USER` を渡し `require_host_user` が uid/gid を導く。渡されていなければ `!! HOST_USER is not set. Run kvm.sh as a regular user, or through kvm-container.service` で exit 1 |
 | `sudo` が使える | `podman`、`getent shadow`、`modprobe`、`chmod /dev/kvm`、`data/` と `/run/kvm-container` の操作に使う |
 | パスワードが設定されている | `sudo getent shadow` のハッシュが空、`!` 始まり、`*` 始まりのいずれかなら `!! USER has no usable password on the host; cockpit login will not work until one is set (passwd), then ./kvm.sh down kvm && ./kvm.sh up` を出すが起動は続行する (cockpit にログインできないだけ) |
 | `launch` (Activities から起動) を使う場合 | パスワード無しで `sudo podman` を実行できる sudoers 設定が必要 (`sudo -n` で実行するため。4.7 節) |
@@ -265,6 +268,7 @@ flowchart TB
 | `container/kvm/cockpit.conf` | コンテナ | kvm | cockpit-ws の設定 | cockpit-ws 起動時に読まれる |
 | `container/kvm/kvm-net-teardown.service` | コンテナ | kvm | 停止時に libvirt ネットワークを `net-destroy` | 停止時 (`ExecStop`) |
 | `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh firefox` / `virt-manager` / `viewer` / `launch` から `podman exec` |
+| `quadlet/kvm-container.container` | ホスト | kvm | Quadlet テンプレート。`install-service` が `@...@` を埋めて `/etc/containers/systemd/` に配置 (3.6 節) | `kvm.sh install-service` |
 
 ### 3.3 コンテナ実行仕様 (`podman run`)
 
@@ -285,6 +289,9 @@ flowchart TB
 | `-e TZ=${TZ:-Asia/Tokyo}` | 既定 `Asia/Tokyo` | コンテナのタイムゾーン |
 | `--shm-size 2g` | 固定 | 共有メモリ |
 | イメージ | `localhost/kvm-container/kvm:latest` | |
+
+Quadlet 登録中 (3.6 節) は、この `podman run` を発行するのは `kvm.sh` ではなく `kvm-container.service` になる。
+引数の意味は同じだが、生成側の差分は 3.6 節の表を参照。
 
 `start_gui` が発行する `kvm-gui` の `podman run` 引数:
 
@@ -416,6 +423,86 @@ flowchart LR
 | 適用方法 | `libvirt-conf` の `set_key`: `^#?key = ` の行があれば置換、無ければ末尾に追記。それ以外の行は触らない | `/etc/libvirt` は `data/etc-libvirt` で空のときしか seed されないため、ビルド時に書いても既存の `data/` には届かない。起動ごとの冪等適用なら旧 `data/` もそのまま使える |
 | 診断 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` が通ればコンテナをまたぐ接続は正常 (CLAUDE.md の回帰テスト) | |
 
+
+### 3.6 systemd 統合 (Quadlet、`kvm` のみ)
+
+`kvm.sh install-service` を実行すると、`kvm` コンテナは systemd サービスになる。ブート時に自動起動し、
+異常終了したら再起動する。`kvm-gui` は対象外 (1.2 節)。
+
+```mermaid
+flowchart TB
+  t["quadlet/kvm-container.container<br/>(リポジトリ、@...@ 入り)"]
+  i["/etc/containers/systemd/kvm-container.container<br/>(root 0644)"]
+  u["kvm-container.service<br/>(ディスクに実体は無い)"]
+  pre["ExecStartPre: kvm.sh prepare (root、致命)<br/>ensure_kvm / イメージ確認 / data の seed / check_host_network<br/>reset_run_dir / kvm.env を 0600 root で作成"]
+  run["ExecStart: podman run (Quadlet 生成)"]
+  c["コンテナ kvm"]
+  post["ExecStartPost: kvm.sh ready (root、「-」で非致命)<br/>wait_kvm_ready 120 → sync_bridged_network → ready_message"]
+  rm["ExecStartPost: rm -f /run/kvm-container/kvm.env"]
+  stop["ExecStop: podman rm -v -f -i (Quadlet 生成)"]
+  t -->|"install-service: sed で置換 → install -D -m 0644"| i
+  i -->|"podman-system-generator<br/>(daemon-reload のたび)"| u
+  u --> pre --> run --> c
+  c --> post --> rm
+  u -.->|"systemctl stop / ホストの shutdown"| stop --> c
+```
+
+図 7b: テンプレートからコンテナまで。ユニットの実体はディスクに無く、`daemon-reload` のたびに生成される。
+
+#### 焼き込まれる値
+
+システムサービスには実行時に読み取るセッションが無いので、次の値は `install-service` の時点で確定し、
+`.container` に書き込まれる。変更は `install-service` のやり直し。
+
+| 値 | 出所 | 使われ方 |
+| --- | --- | --- |
+| `HOST_USER` / `HOST_UID` / `HOST_GID` | `install-service` を実行したユーザー | `[Container] Environment=` (コンテナ内の `gui-user-setup` が読む) と `[Service] Environment=` (root で動く `kvm.sh` が読む)、`Volume=.../home:/home/<HOST_USER>` |
+| `COCKPIT_BIND` / `COCKPIT_PORT` | 環境変数 (既定 `127.0.0.1` / `9091`) | `Environment=COCKPIT_LISTEN=<bind>:<port>`、`[Service]` 側は `ready` のメッセージ用 |
+| `KVM_BRIDGE` | 環境変数 (既定は空) | `[Service] Environment=`。`prepare` の `check_host_network` と `ready` の `sync_bridged_network` が読む |
+| `TZ` | 環境変数 (既定 `Asia/Tokyo`) | `Environment=TZ=` |
+| `KVM_DATA_DIR` / `KVM_RUN_DIR` / リポジトリのパス | `kvm.sh` の定数 (`$PWD` 基準) | `Volume=`、`EnvironmentFile=`、`ExecStartPre=` / `ExecStartPost=`、`RequiresMountsFor=` |
+
+`./kvm.sh up` は `systemctl show -p Environment` でこれらを読み戻し (`quadlet_env`)、呼び出し側の環境変数と
+食い違えば `!! <VAR>=<値> is ignored: kvm-container.service was installed with <VAR>=<焼き込み値> (./kvm.sh install-service to change it)`
+を出したうえで**焼き込み値を採用する** (`quadlet_adopt`)。採用まで行うのは、`start_gui` が `COCKPIT_LISTEN` を
+`kvm-gui` にも渡すためで、そうしないと firefox が誰も listen していないポートを開くことになる。
+`HOST_USER` だけは採用せず警告のみ (`data/home` のマウント先が変わってしまうため)。
+
+#### 主なキーと理由
+
+| キー | 値 | 理由 |
+| --- | --- | --- |
+| `PodmanArgs=` | `--privileged --systemd=always` | Quadlet に専用キーが無い |
+| `Network=host` | | `podman -p` は使えない。cockpit のポートは `COCKPIT_LISTEN` → `cockpit-listen-generator` (4.5 節) |
+| `EnvironmentFile=` | `/run/kvm-container/kvm.env` | パスワードハッシュ (4.3 節)。`prepare` が起動のたびに 0600 root で書き、2 本目の `ExecStartPost` が消す |
+| `StopTimeout=` | `30` | コンテナ内の `kvm-net-teardown.service` が `TimeoutStopSec=15` を持つ。10 秒では途中で SIGKILL され `virbr0` がホストに残る |
+| `Restart=` / `RestartSec=` | `on-failure` / `10` | 正常 shutdown (SIGRTMIN+3) は exit 0 なので手動停止と競合しない。crash のみ復帰 |
+| `[Unit] StartLimitIntervalSec=` / `StartLimitBurst=` | `300` / `5` | `RestartSec=10` は systemd 既定の `StartLimitIntervalSec=10s` 以上で、そのままではレート制限が働かず恒久的な失敗 (ポート使用中、イメージ無し) で無限に再起動してしまう |
+| `Wants=` / `After=` | `network-online.target` | `check_host_network` は `KVM_BRIDGE` がブリッジとして存在しなければ exit 1 する |
+| `RequiresMountsFor=` | リポジトリのパス | マウント前に起動すると `prepare_data_dir` が「空だから seed」と判断し、後から現れる本物の `data/` を隠してしまう |
+| `ExecStartPre=` | `kvm.sh prepare` | 失敗はユニットの失敗 (意図的) |
+| `ExecStartPost=` | `-kvm.sh ready` / `-rm -f .../kvm.env` | **`-` 前置で非致命**。致命にすると readiness のタイムアウトだけで `ExecStop` が走り、VM が動いているコンテナごと破棄される |
+| `[Install] WantedBy=` | `multi-user.target` | Quadlet 生成ユニットは `systemctl enable` できない。自動起動はこの節を generator が適用することで実現する |
+| `Notify=` | 書かない | 既定 (`Type=notify` + `--sdnotify=conmon`) のまま。`Notify=true` はソケット活性化の `virtqemud` に対して「起動完了 ≠ `virsh list` が通る」ので readiness 検査を省けず、コンテナ内が degraded だとユニットごと failed になる。`Notify=healthy` は podman のヘルスチェックがホストに transient な unit を作り、特権コンテナへ定期的に `podman exec` し続ける |
+
+#### 3.3 節の `podman run` との差分
+
+Quadlet が生成する `ExecStart` には次が自動で付く。
+
+| 追加される引数 | 影響 |
+| --- | --- |
+| `--replace` / `--rm` | `start_kvm` の `podman rm -f -i` に相当。停止後は `podman ps -a` に `kvm` が残らないが、`running()` も `logs` も稼働中のコンテナしか見ないので影響しない |
+| `--log-driver passthrough` | コンテナ内 PID 1 の出力が `journalctl -u kvm-container` に入る |
+| `--sdnotify=conmon` / `--cidfile` | `Type=notify` の受け口。`systemctl start` はコンテナが走り出した時点で返り、readiness は `ExecStartPost` が待つ |
+| `--cgroups=split` (+ `[Service] Delegate=yes`) | `kvm.sh` の既定 (`enabled`) と異なる。コンテナ内 systemd が `running` になることを実機で確認する (9.5 節)。問題があれば `PodmanArgs` の末尾に `--cgroups=enabled` を足して後勝ちで上書きする |
+
+#### 所有権の原則
+
+登録中は `kvm` コンテナの持ち主は systemd である。`kvm.sh up` / `down` は `podman run` / `podman rm` を発行せず
+`systemctl start` / `stop` に委譲する (`quadlet_installed` が `/etc/containers/systemd/kvm-container.container` の
+存在で判定)。`up gui` / `firefox` / `virt-manager` / `viewer` / `virsh` / `shell` / `logs` / `clean` は変わらない
+(`firefox` などは `kvm.sh up` を経由するので自動的に委譲される)。
+
 ## 4. 外部インターフェース仕様
 
 ### 4.1 CLI (`kvm.sh <サブコマンド> [ロール] ...`)
@@ -427,8 +514,8 @@ flowchart LR
 | サブコマンド | 引数 | 前提 | 動作 | 終了 |
 | --- | --- | --- | --- | --- |
 | `build [kvm\|gui] [podman build 引数]` | ロール省略で両方 | | ロールごとに `podman build --target <role> -t localhost/kvm-container/<role>:latest -f Containerfile "$@" .` (`>> building ... (Containerfile target <role>)`) | podman の終了コード |
-| `up [kvm\|gui]` | 追加引数があれば usage で 1 | 2 章の要件 | 省略: `start_kvm` → `have_display` なら `start_gui`、無ければ `>> no display found: GUI disabled, use cockpit in a browser`。`kvm`: `start_kvm` のみ。`gui`: `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed` で 1、あれば `start_gui` のみ (5.1 節) | `kvm` の readiness が 30 秒で確認できなければ `!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell` で 1 |
-| `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` → `kvm` の順に `podman rm -f -i -t 10`、さらに `sudo rm -rf /run/kvm-container`。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman の終了コード |
+| `up [kvm\|gui]` | 追加引数があれば usage で 1 | 2 章の要件 | Quadlet 登録中は `start_kvm` の代わりに `start_kvm_service` (焼き込み値の採用と `systemctl start`、3.6 節)。省略: `start_kvm` → `have_display` なら `start_gui`、無ければ `>> no display found: GUI disabled, use cockpit in a browser`。`kvm`: `start_kvm` のみ。`gui`: `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed` で 1、あれば `start_gui` のみ (5.1 節) | `kvm` の readiness が 30 秒で確認できなければ `!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell` で 1 |
+| `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` (`podman rm -f -i -t 10`) → `kvm` の順に停止し、さらに `sudo rm -rf /run/kvm-container`。`kvm` は Quadlet 登録中なら `systemctl stop kvm-container.service`、でなければ `podman rm -f -i -t 30` (unit の `StopTimeout` と揃えた値)。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman / systemctl の終了コード |
 | `clean` | 無し | | `kvm.sh down` (両方) → `data/` が無ければ `>> ... does not exist` で 0 → 削除対象と `du -sh` を表示 → `KVM_CLEAN_YES=1` でなければ `This deletes the VM disks and definitions as well. Continue? [y/N]` を尋ね、`y`/`Y` 以外は `>> aborted` で 1 → `sudo rm -rf data/` | 上記 |
 | `firefox` / `virt-manager` | 追加引数 (アプリへ渡す) | ディスプレイ | `have_display` でなければ `!! no display found: use cockpit in a browser (https://BIND:PORT)` で 2。`kvm.sh up` (足りないものを起動し、再ログイン後は `kvm-gui` を作り直す) → `podman exec kvm-gui gui <cmd> "$@"` | `gui` の終了コード |
 | `viewer <VM名>` | VM 名 (virt-viewer の引数) | 同上 | 同上。`viewer` を `virt-viewer` に読み替えて `gui virt-viewer <VM名>` | 同上 |
@@ -438,6 +525,10 @@ flowchart LR
 | `launch <app>` | `firefox` または `virt-manager` | `.desktop` から呼ばれる。podman の NOPASSWD sudo | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
 | `install-desktop` | 無し | root 以外、デスクトップにログインしたユーザー | `gui` イメージが無ければ `build gui`。アイコン抽出と `.desktop` 配置 (4.7 節) | 0 |
 | `uninstall-desktop` | 無し | root 以外 | `.desktop` とアイコンを削除 | 0 |
+| `install-service` | 無し | root 以外、systemd が PID 1、テンプレートが読めること | `kvm` イメージが無ければ `build kvm` → テンプレートの `@...@` を置換 (未置換が残れば `!! the template has placeholders this version of kvm.sh does not fill: ...` で 1) → `sudo install -D -m 0644 -o root -g root` で `/etc/containers/systemd/kvm-container.container` に配置 (あれば `restorecon -F`) → `/run/kvm-container/kvm.env` を 0600 root で用意 → `daemon-reload` → `systemctl cat` で生成を検証 → 配置先・操作方法・焼き込み値・`kvm-gui` は対象外、を表示。`kvm` が起動中なら、SELinux が Enforcing で `kvm.sh` が `bin_t` でなければ、それぞれ警告 (3.6 節) | 0 / 検証失敗で 1 |
+| `uninstall-service` | 無し | root 以外 | 未登録なら `>> ... is not installed` で 0。登録中なら `systemctl stop` → `.container` を削除 → `daemon-reload` → `>> removed: ...` | 0 |
+| `prepare` | 無し | **root** (`kvm-container.service` の `ExecStartPre`)。`HOST_USER` が渡されていること | `require_host_user` → `prepare_kvm require` (イメージが無ければ `!! image ... not found. Run ./kvm.sh build kvm first` で 1。**ビルドはしない**) → `reset_run_dir` → `write_env_file` | 0 / 1 |
+| `ready` | 無し | **root** (`ExecStartPost`、`-` 前置で非致命)。`HOST_USER` が渡されていること | `require_host_user` → `wait_kvm_ready 120` (失敗で 1) → `sync_bridged_network` → `ready_message` | 0 / 1 |
 
 ### 4.2 環境変数 (ホスト側の入力)
 
@@ -452,6 +543,9 @@ flowchart LR
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 (`LIBGL_ALWAYS_SOFTWARE=1`) | `host_force_software_gl` |
 | `TZ` | `Asia/Tokyo` | 両コンテナのタイムゾーン | `podman run -e TZ` |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 | `clean` |
+
+Quadlet 登録中 (3.6 節) は `COCKPIT_BIND` / `COCKPIT_PORT` / `KVM_BRIDGE` / `TZ` とホストユーザーが
+`install-service` の時点でユニットに焼き込まれ、以後 `up` に付けた値は警告のうえ無視される。
 
 セッションから読む変数 (`have_display` が真のとき、`gui_args`):
 
@@ -502,10 +596,15 @@ flowchart LR
 セッション情報 (`GUI_ARGS`) は `kvm-gui` にだけ渡る。`host_user_args` は一度組み立てたら再実行しない (`up` で両コンテナを起動しても
 `getent shadow` は 1 回)。
 
+Quadlet 登録中の `kvm` では、この経路のうち `kvm.sh` が `podman run` に渡していた部分をユニットが担う
+(`Environment=` と `EnvironmentFile=`)。ハッシュだけは起動のたびに変わり得るので焼き込まず、`ExecStartPre` の
+`prepare` が `/run/kvm-container/kvm.env` に書き、コンテナが上がったら 2 本目の `ExecStartPost` が消す。
+コンテナ側から見た受け取り方 (PID 1 の environ) は CLI 起動と同じ。
+
 | 変数 | 渡し方 | 渡す先 | 値 | 読む側 |
 | --- | --- | --- | --- | --- |
-| `HOST_USER` `HOST_UID` `HOST_GID` | `-e` | 両方 | `id -un` / `id -u` / `id -g` | `gui-user-setup` (全部)、`gui` (`HOST_USER`) |
-| `HOST_PASSWORD_HASH` | `--env-file` (mktemp、EXIT trap で削除) | `kvm` のみ | `sudo getent shadow` の第 2 フィールド。使えないハッシュのときは渡さない | `gui-user-setup` (kvm) |
+| `HOST_USER` `HOST_UID` `HOST_GID` | `-e` (Quadlet では `Environment=`) | 両方 | `id -un` / `id -u` / `id -g`。Quadlet では `install-service` を実行したユーザーの値が焼き込まれる | `gui-user-setup` (全部)、`gui` (`HOST_USER`) |
+| `HOST_PASSWORD_HASH` | `--env-file` (mktemp、EXIT trap で削除)。Quadlet では `EnvironmentFile=/run/kvm-container/kvm.env` | `kvm` のみ | `sudo getent shadow` の第 2 フィールド。使えないハッシュのときは、CLI では渡さず、Quadlet では空値を書く (`--env-file` はファイルの実在が必要。空値は `gui-user-setup` が「無し」として `usermod -L` する) | `gui-user-setup` (kvm) |
 | `COCKPIT_LISTEN` | `-e` | 両方 | `<COCKPIT_BIND>:<COCKPIT_PORT>` | `cockpit-listen-generator` (kvm)、`gui` (firefox の URL 用にポート部分) |
 | `HOST_RUNTIME_DIR` | `-e` | `kvm-gui` | `/run/host-xdg-runtime` | `gui` (Xauthority の探索) |
 | `WAYLAND_DISPLAY` `DISPLAY` `XAUTHORITY` `PULSE_SERVER` | `-e` (存在するものだけ) | `kvm-gui` | コンテナ内から見た絶対パス (`PULSE_SERVER` は `unix:` 付き、`DISPLAY` はホストの値そのまま) | `gui` → GUI アプリ。`gui_session_matches` も参照する |
@@ -669,6 +768,7 @@ flowchart TD
 
 図 12: `data/` の初期化と共有 run dir の寿命。バインドマウントは named volume と違い初回にイメージ側の内容をコピーしないので、
 空のときだけ `kvm` イメージの一時コンテナで `cp -a` する。seed 元は `/var/lib/libvirt` `/etc/libvirt` `/etc/skel` (ホームの雛形)。
+Quadlet 登録中は同じ処理を `ExecStartPre` の `kvm.sh prepare` が行う (違いはイメージが無いときにビルドせず失敗すること)。
 
 | 項目 | 仕様 |
 | --- | --- |
@@ -677,7 +777,8 @@ flowchart TD
 | SELinux | どちらのコンテナもラベル分離無し (`kvm` は `--privileged`、`kvm-gui` は `label=disable`) なので `:Z` 等は不要。seed コンテナは `container_t` のままだと `user_home_t` の `data/` に書けないため `--security-opt label=disable` を付ける |
 | `data/home` | 両コンテナの `/home/<HOST_USER>` にマウントされ、それぞれの `gui-user-setup` が `chown -R HOST_UID:HOST_GID` する |
 | `data/etc-libvirt` | seed は空のときだけ。libvirt の認証設定と qemu.conf は `kvm-libvirt-conf.service` が起動ごとに上書きする (3.5 節) |
-| `/run/kvm-container` | 永続化しない。`start_kvm` が `libvirt/` の中身を空にし、`start_gui` も `mkdir -p` する。`down` (引数なし) で削除 |
+| `/run/kvm-container` | 永続化しない (tmpfs)。`reset_run_dir` が `libvirt/` の**中身だけ**を空にし (`start_kvm` と `prepare` の両方から、古いコンテナを消した後で)、`start_gui` も `mkdir -p` する。`down` (引数なし) で削除 |
+| `/run/kvm-container/kvm.env` | Quadlet 登録中のみ。`prepare` が起動のたびに root 0600 で書き (`HOST_PASSWORD_HASH=`)、コンテナが上がったら 2 本目の `ExecStartPost` が消す。`install-service` も空のファイルを 1 つ置く (3.6 節、7 章) |
 | 削除 | `data/` は `clean` のみ (`down` では残る)。パスワード変更の反映は `down kvm` → `up` |
 
 ### 4.7 デスクトップ統合 (Activities からの起動)
@@ -834,6 +935,33 @@ logind が `/var/lib/systemd/linger` を起動時にしか読まないため。`
 | `kvm-gui` が現セッション用に起動中 | `>> kvm-gui is already running` |
 | ディスプレイ無し (`up` 引数なし) | `>> no display found: GUI disabled, use cockpit in a browser` |
 
+#### ブート時 / `systemctl start` のシーケンス (Quadlet 登録中)
+
+```mermaid
+sequenceDiagram
+  participant D as systemd (ホスト)
+  participant K as kvm.sh (root)
+  participant P as podman
+  participant C as コンテナ kvm
+  D->>D: network-online.target と RequiresMountsFor= のマウントを待つ
+  D->>K: ExecStartPre: kvm.sh prepare
+  K->>K: require_host_user (ユニットの HOST_USER から uid/gid)
+  K->>K: ensure_kvm / イメージの存在確認 (無ければ失敗。ビルドはしない)
+  K->>P: prepare_data_dir ×3 (空のときだけ seed)
+  K->>K: check_host_network / reset_run_dir / write_env_file (kvm.env を 0600 root で)
+  D->>P: ExecStart: podman run --replace --rm --cgroups=split --sdnotify=conmon ...
+  P->>C: コンテナ起動 (/sbin/init)
+  P-->>D: conmon が READY=1 (Type=notify) → unit は active
+  D->>K: ExecStartPost: kvm.sh ready (「-」前置で非致命)
+  K->>C: wait_kvm_ready 120 (cockpit.socket と virsh list)
+  K->>C: sync_bridged_network / ready_message (journal に出る)
+  D->>D: ExecStartPost: rm -f /run/kvm-container/kvm.env
+```
+
+図 16b: `kvm-container.service` の起動。`systemctl start` はコンテナが走り出した時点で返り、readiness は
+`ExecStartPost` が待つ。`ready` が失敗してもコンテナは残る (`-` 前置)。`./kvm.sh up` はこの `systemctl start` を
+呼ぶだけで、`>> ready. cockpit: ...` は `up` 側でも表示される (`ready_message`)。
+
 ### 5.2 停止シーケンス (`kvm.sh down`)
 
 ```mermaid
@@ -861,6 +989,19 @@ sequenceDiagram
   K->>H: sudo rm -rf /run/kvm-container
   Note over H: data/ (VM 定義・ディスク・home) は残る。down kvm / down gui は片方だけ止め、/run/kvm-container は残す
 ```
+
+Quadlet 登録中は `kvm` の行が `systemctl stop kvm-container.service` に置き換わり、`podman rm` は
+ユニットの `ExecStop` が発行する。停止に使える時間は次の 3 つで決まる。
+
+| 設定 | 値 | 意味 |
+| --- | --- | --- |
+| `[Container] StopTimeout=` | 30 | `podman` がコンテナに与える猶予。これを過ぎると SIGKILL |
+| `[Service] TimeoutStopSec=` | 60 | `ExecStop` そのものの上限 |
+| コンテナ内 `kvm-net-teardown.service` の `TimeoutStopSec=` | 15 | `net-destroy` と `ip link del` に使える時間 |
+
+`down` の非 Quadlet 経路も `-t 10` から `-t 30` に揃えてある。10 秒では teardown が終わらないうちに SIGKILL され、
+ホストに `virbr0` が残ることがあるため。ホストの shutdown / reboot でも systemd がユニットを停止するので、
+Quadlet 登録中は teardown が走る (手動起動では `down` を忘れると走らない)。
 
 図 17: 停止シーケンス。`virbr0` はホストの名前空間にあるため、コンテナが消えても自動では消えない。libvirt のデーモンが
 生きているうちに `net-destroy` し、idle-exit していて socket activation が拒否される場合に備えて `ip link del` も行う。
@@ -957,6 +1098,10 @@ linger は `loginctl enable-linger` と同じ効果を logind 起動前に得る
 
 ### 5.7 ブリッジ同期 (`sync_bridged_network`)
 
+呼び出し元は `start_kvm` (CLI) と `ready` (Quadlet の `ExecStartPost`) の 2 つで、どちらも readiness の確認後。
+`bridged` は `net-autostart` 済みなので、`ready` が失敗した回でも次回以降 libvirt 自身が起動する。
+
+
 ```mermaid
 flowchart TD
   s["sync_bridged_network (kvm の readiness 確認後、start_kvm のたびに実行)"] --> a{"KVM_BRIDGE が設定されているか"}
@@ -994,6 +1139,11 @@ flowchart LR
     b12["/etc/libvirt の設定を Containerfile の sed で行う"]
     b13["/run/kvm-container/libvirt を空にせずに kvm を起動する、またはディレクトリごと消す"]
     b14["kvm-gui のセッション判定を省いて再利用する"]
+    b15["Quadlet 登録中に podman run / podman rm で kvm を直接触る"]
+    b16["ExecStartPost の ready を「-」無し (致命) にする"]
+    b17["prepare でイメージが無ければビルドする"]
+    b18["ユニットに HOST_USER / HOST_UID / HOST_GID を書かない"]
+    b19["古いコンテナを消す前に reset_run_dir を呼ぶ"]
   end
   subgraph result ["起きること"]
     r1["cockpit ログインで logind がホストの bus / systemd --user を作り直し、ログアウト時に user-runtime-dir@ がホストの Wayland ソケットごと削除 (PR 10)"]
@@ -1010,6 +1160,11 @@ flowchart LR
     r12["data/etc-libvirt は空のときしか seed されないので、既存の data/ に設定が届かない (PR 18)"]
     r13["前回のソケット・pid・VM 状態が残ってデーモンが混乱する。ディレクトリを消すと起動中の kvm-gui が古い inode を見続ける (PR 18)"]
     r14["再ログイン後に古い (消えた) Wayland ソケットへ繋ぎ続け、画面に出ない (PR 18)"]
+    r15["同じコンテナを systemd と手動 podman が二重に管理し、systemctl の状態と実体が食い違う (PR 22)"]
+    r16["readiness が 1 回タイムアウトしただけで ExecStop が走り、VM が動いているコンテナごと破棄される (PR 22)"]
+    r17["ブートがイメージのビルド時間だけ止まる (PR 22)"]
+    r18["gui-user-setup がユーザーを 1 人も作らず、cockpit にログインできない (PR 20、PR 22)"]
+    r19["kvm-net-teardown がそこの libvirt ソケット経由で virbr* を消せず、ホストに残る (PR 22)"]
   end
   b1 --> r1
   b2 --> r2
@@ -1025,6 +1180,11 @@ flowchart LR
   b12 --> r12
   b13 --> r13
   b14 --> r14
+  b15 --> r15
+  b16 --> r16
+  b17 --> r17
+  b18 --> r18
+  b19 --> r19
 ```
 
 図 21: 禁止構成とその帰結。左の構成にすると右の不具合が再発する。
@@ -1045,6 +1205,12 @@ flowchart LR
 | ホスト → コンテナの値は PID 1 の environ 経由。パスワードハッシュだけは `--env-file` で `kvm` にだけ、`gui` は `runuser` 前に `unset` | `kvm.sh`、`gui-user-setup` `env_of_pid1`、`gui` | 新しい値もこの流儀で渡す |
 | コンテナ名は `kvm` / `kvm-gui`、イメージ名は `localhost/kvm-container/{kvm,gui}` に固定 (変数名 `KVM_CONTAINER` / `GUI_CONTAINER` / `KVM_IMAGE` / `GUI_IMAGE`)。`NAME` は使わない | `kvm.sh` | `NAME` は WSL がホスト名に使う |
 | ホスト依存の挙動は `host_*` フックで足す。`kvm.sh` 本体に WSL 分岐を書かない | `kvm.sh`、`host/wsl.sh` | 5.6 節 |
+| Quadlet 登録中は `kvm` の持ち主は systemd。`up` / `down` は `systemctl` に委譲し、`podman run` / `podman rm` で直接触らない | `kvm.sh` `quadlet_installed` / `start_kvm_service` / `down` | 3.6 節。判定は `/etc/containers/systemd/kvm-container.container` の存在 |
+| `ExecStartPost` の `ready` は `-` 前置の非致命。`ExecStartPre` の `prepare` は致命 | `quadlet/kvm-container.container` | 起動できていないことと、起動できたのに確認が取れないことを区別する |
+| `prepare` はイメージをビルドしない (`prepare_kvm require`)。CLI (`prepare_kvm build`) だけがビルドする | `kvm.sh` `prepare_kvm` | ブートを止めないため。`install-service` が先にビルドしておく |
+| ユニットには `HOST_USER` / `HOST_UID` / `HOST_GID` を必ず書く | `quadlet/kvm-container.container`、`install_service` | `gui-user-setup` はこれが無いとユーザーを作らずに終了する |
+| `reset_run_dir` は古いコンテナを消した後に呼ぶ | `kvm.sh` `start_kvm` / `prepare` | 停止中のコンテナの `kvm-net-teardown` が、そこにある libvirt ソケットを使う |
+| EXIT trap が参照する変数はグローバルにする (`ENV_FILE`、`QUADLET_TMP`) | `kvm.sh` | trap は関数の外で走るので、`local` だと `set -u` で unbound になる |
 
 ## 7. セキュリティ考慮事項
 
@@ -1054,6 +1220,8 @@ flowchart LR
 | `kvm-gui` の権限 | 非特権 (`--privileged` 無し、capability の追加無し)、`--security-opt label=disable`、`--network host`、`--device /dev/dri` | ブラウザなど攻撃面の広いアプリを特権コンテナから切り離す。SELinux のラベル分離は無いので、ホスト側からは通常の非特権コンテナ相当 |
 | libvirt へのアクセス制御 | polkit ではなくソケットの所有グループ (`root:libvirt 0660`) と `auth_unix_rw = "none"`。両コンテナの GUI ユーザーと `kvm` の `libvirtdbus` が `libvirt` グループ | `libvirt` グループ (gid 985) に入れるプロセスは誰でも `qemu:///system` を完全に操作できる。gid 985 を持つホスト側のプロセスも `/run/kvm-container/libvirt` 経由で届く |
 | ホストユーザーのパスワードハッシュ | `sudo getent shadow` で取得 → `mktemp` のファイルに書く (既定 0600) → `podman run --env-file` で `kvm` にだけ渡す (コマンドラインには出ない) → `kvm.sh` 終了時に EXIT trap で削除。`kvm-gui` には渡さない | ハッシュは `kvm` 内 root (PID 1 の environ、`/etc/shadow`) から読める。`kvm-gui` とその中の GUI アプリには存在しない |
+| 同上 (Quadlet 登録中) | `prepare` が `/run/kvm-container/kvm.env` を root 0600 で作り (先にモードを確定してから書く)、コンテナ生成後に `ExecStartPost` が削除する。置き場所は tmpfs | 読めるのは root だけで、root はもともと `/etc/shadow` を直接読めるので露出面は増えない。増えるのは寿命 (起動シーケンスの数秒) だけ。podman の secret ストアはディスク上に永続するので採らない |
+| ユニットがリポジトリのスクリプトを root で実行する | `ExecStartPre` / `ExecStartPost` が `<リポジトリ>/kvm.sh` を root で起動する | **そのリポジトリに書き込める者は、ブート時に root でコードを実行できる**。もともと `sudo podman` が使える前提なので実効的な権限昇格ではないが、リポジトリの所有者と権限は他人に書けない状態に保つこと。SELinux Enforcing ではホーム配下の `user_home_t` を systemd が実行できず、`semanage fcontext -t bin_t` が要ることがある (3.6 節) |
 | cockpit の TLS | 自己署名証明書 (cockpit-ws の既定)。`AllowUnencrypted = true`、`ProtocolHeader = X-Forwarded-Proto` | ブラウザで警告が出る。既定 bind は `127.0.0.1` なのでホスト外からは届かない |
 | `COCKPIT_BIND=0.0.0.0` / `::` | ホストの全アドレスで listen。認証はホストユーザーの名前・パスワード (`kvm` の `/etc/shadow`) | ホストユーザーの資格情報が LAN から試行可能になる。firewalld の開放は利用者が行う |
 | `kvm` 内の sudo | `%wheel ALL=(ALL) NOPASSWD: ALL` (`kvm` イメージのみ)。GUI ユーザーは `wheel` に属する | cockpit の「管理者アクセス」に使う。`kvm` 内では GUI ユーザー = root 相当。`kvm-gui` に sudoers は無い |
@@ -1077,7 +1245,13 @@ flowchart LR
 | virt-manager | EPEL に無い環境では `gui` イメージに入らず、`install-desktop` は `.desktop` をスキップする |
 | WSLg のスタートメニュー | `~/.local/share/applications` の `.desktop` は Windows のスタートメニューに反映されるはずだが未検証 |
 | 1 コンテナ構成からの移行 | 旧構成の `kvm` コンテナは `/run/libvirt` を共有していないので、`./kvm.sh down` で消してから `./kvm.sh build && ./kvm.sh up` する。旧イメージ `localhost/qemu-kvm-cockpit` は `sudo podman rmi` で消せる。`data/` はそのまま使える (`kvm-libvirt-conf.service` が設定を更新する) |
-| 起動確認のタイムアウト | `kvm` の readiness は 30 秒固定。遅いホストでは `could not confirm startup` になり得る (コンテナ自体は起動を続ける)。`kvm-gui` には readiness 待ちが無い |
+| Quadlet: `systemctl enable` 不可 | generator が作るユニットなので `systemctl enable` / `disable` は使えない。自動起動はテンプレートの `[Install]` を generator が適用することで実現する。切り替えは配置済みファイルの編集か `install-service` のやり直し |
+| Quadlet: 設定の焼き込み | `COCKPIT_BIND` / `COCKPIT_PORT` / `KVM_BRIDGE` / `TZ` とホストユーザーは登録時の値に固定される。実行時の環境変数は `up` が警告して無視する (3.6 節) |
+| Quadlet: `kvm-gui` は対象外 | セッション依存のため。ログイン後に `./kvm.sh up gui` (または `firefox` / `virt-manager`) で起動する。共有 run dir は `prepare` が用意済みなので後から参加できる |
+| Quadlet: 暗号化ホーム | ログイン時に復号・マウントされるホーム (systemd-homed / fscrypt / eCryptfs) では、`RequiresMountsFor=` があってもブート時起動は成立しない。リポジトリを `/home` の外に置く |
+| Quadlet: 初回の起動 | `./kvm.sh up` で `kvm` を手動起動したまま `systemctl start` すると、`prepare` の `check_host_network` がそのコンテナ自身の cockpit をポート衝突として検出して失敗する。`install-service` が起動中なら警告する |
+| Quadlet: WSL2 | systemd が PID 1 でなければ `install-service` は中止する。`/etc/wsl.conf` の `[boot] systemd=true` で動くはずだが未検証 |
+| 起動確認のタイムアウト | `kvm` の readiness は CLI で 30 秒、Quadlet の `ready` で 120 秒。遅いホストでは `could not confirm startup` になり得る (コンテナ自体は起動を続ける。Quadlet では `-` 前置なのでユニットも失敗しない)。`kvm-gui` には readiness 待ちが無い |
 
 ```mermaid
 stateDiagram-v2
@@ -1120,6 +1294,9 @@ shellcheck $files          # 指摘ゼロを保つ (-S style でもゼロ)
 # shellcheck がホストに無ければ gui イメージの使い捨てコンテナで実行できる:
 sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
   sh -c 'microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
+
+# Quadlet テンプレートを触ったとき: プレースホルダの一覧が install_service の sed と一致すること
+grep -o '@[A-Z_]*@' quadlet/kvm-container.container | sort -u
 ```
 
 ### 9.2 物理 AlmaLinux 10 + GNOME
@@ -1160,6 +1337,30 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `install-desktop` / `launch` | Activities から起動できる。`kvm-gui` 未起動時と sudo 失敗時に通知が出る |
 | パスワード | ホストユーザーのパスワードで cockpit にログインできる。コンテナには他に一般ユーザーが居ない。`podman run` のコマンドラインにハッシュが出ない。`kvm-gui` 内の `/etc/shadow` でユーザーがロックされている |
 | ロール引数 | `up kvm` は `kvm-gui` を起動しない。ディスプレイ無しで `up gui` は exit 1。`build gui` は `gui` イメージだけを作る |
+| Quadlet | 9.5 節 |
+
+### 9.5 Quadlet (`install-service` を触ったとき)
+
+| コマンド | 期待結果 | 検証していること |
+| --- | --- | --- |
+| `./kvm.sh build kvm && ./kvm.sh down kvm && ./kvm.sh install-service` | `>> installed: ... -> kvm-container.service (starts at boot)` | テンプレートの置換と配置 |
+| `sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun` | `kvm` の `podman run` が 3.3 節の引数で出る | generator が `.container` を解釈できている |
+| `systemctl cat kvm-container.service` | `Type=notify` / `ExecStart` / `ExecStop` が出る | ユニットが生成されている (podman 4.4 以降) |
+| `ls -l /run/systemd/generator/multi-user.target.wants/kvm-container.service` | 存在する | `[Install]` が効いている (`systemctl enable` は使えない) |
+| `ls -Z /etc/containers/systemd/kvm-container.container ./kvm.sh` | 配置先が `etc_t` 系 | `install -D` が正しいラベルで作っている。`kvm.sh` が `user_home_t` なら 3.6 節の `semanage fcontext` が要る |
+| `sudo systemctl start kvm-container && systemctl is-active kvm-container` | `active` | 起動と `ExecStartPre` / `ExecStartPost` |
+| `sudo podman exec kvm systemctl is-system-running` | `running` (`degraded` ではない) | Quadlet の `--cgroups=split` + `Delegate=yes` でコンテナ内 systemd が壊れていない **(この変更の要注意点)** |
+| `sudo podman exec kvm getent passwd "$USER"` と `id -u "$USER"` | ホストと同じ名前・uid | ユニットの `HOST_USER` / `HOST_UID` / `HOST_GID` が届いている (無いとユーザーが作られない) |
+| cockpit にホストのパスワードでログイン | できる | `EnvironmentFile=` 経由のハッシュ |
+| `sudo ls -l /run/kvm-container/kvm.env` | 起動完了後は存在しない | 2 本目の `ExecStartPost` の削除 |
+| `sudo podman inspect -f '{{.Created}}' kvm` → `./kvm.sh up` → 同じ | 値が変わらない | `up` が委譲しており、コンテナを作り直していない |
+| `COCKPIT_PORT=9099 ./kvm.sh up` | `!! COCKPIT_PORT=9099 is ignored: ...` | 焼き込み値の採用 (`quadlet_adopt`) |
+| `./kvm.sh up gui && ./kvm.sh firefox` | GUI が出て cockpit が開く | 後から `kvm-gui` を足しても `kvm` が再起動しない。共有 run dir が使える |
+| `time sudo systemctl stop kvm-container; ip link show virbr0` | 30 秒以内、`virbr0` は無い | `StopTimeout=30` で `kvm-net-teardown` が完走する |
+| `sudo reboot` → ログインせずに `systemctl is-active kvm-container` と `./kvm.sh virsh list` | `active`、VM が動いている | ブート時自動起動 |
+| `sudo podman kill -s SIGKILL kvm` | 10 秒後に自動で再起動する | `Restart=on-failure` / `RestartSec=10` |
+| ポートを塞いで `sudo systemctl start kvm-container` を繰り返す | 5 回で `start request repeated too quickly` | `StartLimitIntervalSec=300` / `StartLimitBurst=5` (無限リトライしない) |
+| `./kvm.sh uninstall-service && ./kvm.sh up` | 従来どおり `podman run` で起動する | 委譲の解除 |
 
 ## 付録 A. ファイル一覧とコンテナ内配置
 
@@ -1168,6 +1369,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `kvm.sh` | | (ホスト側) | 実行可能 | |
 | `host/wsl.sh` | | (ホスト側、source) | | |
 | `desktop/kvm-firefox.desktop` `desktop/kvm-virt-manager.desktop` | | (ホスト側、`install-desktop` が `~/.local/share/applications/` へ) | | `@KVM_SH@` を置換 |
+| `quadlet/kvm-container.container` | | (ホスト側、`install-service` が `/etc/containers/systemd/kvm-container.container` へ) | 0644 root (`install -D`) | `@...@` 13 個を置換 (3.6 節) |
 | `Containerfile` | | | | マルチステージ: `base` → `common` → `kvm` / `gui` |
 | `container/common/gui-user-setup` | 両方 | `/usr/local/bin/gui-user-setup` | `chmod +x` | |
 | `container/common/gui-user.service` | 両方 | `/etc/systemd/system/gui-user.service` | | `systemctl enable` |
@@ -1182,6 +1384,8 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `.gitignore` | | | | `*.iso` `*.qcow2` `build.log` `data/` |
 | `data/` (git 管理外) | | `kvm`: `/var/lib/libvirt` `/etc/libvirt` `/home/<HOST_USER>`、`kvm-gui`: `/var/lib/libvirt` (ro) `/home/<HOST_USER>` | バインドマウント | `up` が作成・seed |
 | `/run/kvm-container/libvirt` (ホスト、非永続) | | 両方 `/run/libvirt` | バインドマウント | `up` が空にし `down` で削除 |
+| `/run/kvm-container/kvm.env` (ホスト、非永続) | | `kvm` (`--env-file`) | 0600 root | Quadlet 登録中のみ。`prepare` が書き `ExecStartPost` が消す |
+| `/etc/containers/systemd/kvm-container.container` (ホスト) | | | 0644 root | `install-service` が配置、`uninstall-service` が削除 |
 
 ## 付録 B. 主要な変更履歴
 
@@ -1203,3 +1407,5 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | 16 | CLAUDE.md の追加 | |
 | 18 | コンテナをサーバ `kvm` とデスクトップクライアント `kvm-gui` に分割。マルチステージ Containerfile、`container/{common,kvm,gui}/`、共有 `/run/libvirt` とソケット権限による認証 (`auth_unix_rw = "none"`、`libvirt` の gid 固定)、`kvm-libvirt-conf.service`、`kvm.sh` のロール引数、セッション判定による `kvm-gui` だけの作り直し、ハッシュは `kvm` にだけ渡す | 1.1、3.2〜3.5、4.1、4.3、4.4、5.1、5.2、6 |
 | 20 | イメージのテンプレートユーザー `admin` を廃止し、`gui-user-setup` が起動時に GUI ユーザーを作成する。`data/home` の seed 元は `/etc/skel` | 3.4、4.6、5.3、5.4 |
+| 21 | shellcheck の指摘を解消し、静的検査の対象と手順を整理 | 9.1 |
+| 22 | `kvm` コンテナだけを Quadlet 化し、ブート時自動起動と `systemctl` 管理を可能にする (`quadlet/kvm-container.container`、`install-service` / `uninstall-service` / `prepare` / `ready`、`up` / `down` の委譲、root 実行対応、`kvm.env` によるハッシュ受け渡し)。PR 4 で入れ PR 8 で消した仕組みを、2 コンテナ構成・`--network host`・ホストユーザーの写しに合わせて作り直したもの | 3.6、4.1、5.1、5.2、6、7、8、9.5 |

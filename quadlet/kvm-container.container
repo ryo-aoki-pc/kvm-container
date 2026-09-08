@@ -1,0 +1,80 @@
+# Quadlet template for the "kvm" container (libvirt + qemu-kvm + cockpit). "kvm.sh install-service" replaces the
+# @...@ placeholders with the values in effect at that moment and installs the result as
+# /etc/containers/systemd/kvm-container.container; podman's systemd generator turns it into kvm-container.service
+# on every "systemctl daemon-reload". Re-run install-service to change any of the baked-in values.
+#
+# The GUI container (kvm-gui) is deliberately NOT quadletised: its podman arguments depend on the desktop session
+# (Wayland socket, XAUTHORITY, the kvm.gui-session label) and vary in number, so only kvm.sh can build them at run
+# time. Start it with ./kvm.sh up gui after logging in.
+
+[Unit]
+Description=qemu-kvm / libvirt / cockpit container (kvm)
+Documentation=file://@REPO_DIR@/README.md
+# --network host: libvirt attaches VMs to host bridges and cockpit binds a host address, so the host network has to
+# be up first. "kvm.sh prepare" aborts when KVM_BRIDGE does not exist as a bridge yet
+Wants=network-online.target
+After=network-online.target
+# data/ lives inside the repository, i.e. usually under /home. Never start before that filesystem is mounted, or
+# prepare_data_dir would see an empty directory and seed on top of it, hiding the real data once it appears
+RequiresMountsFor=@REPO_DIR@
+# a permanently broken host (cockpit port taken, image missing, bridge gone) has to stop retrying. RestartSec below
+# must stay well under this interval, otherwise the rate limit never triggers and the unit restarts forever
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Container]
+ContainerName=@CONTAINER@
+HostName=@CONTAINER@
+Image=@IMAGE@
+# no Quadlet keys exist for these two: privileged for KVM/libvirt/logind, systemd=always to run /sbin/init as PID 1
+PodmanArgs=--privileged --systemd=always
+# VMs can be bridged onto the host's segment. cockpit then listens on the host itself, so podman's port publishing
+# cannot be used: cockpit-listen-generator reads COCKPIT_LISTEN below instead
+Network=host
+AddDevice=/dev/kvm
+AddDevice=/dev/net/tun
+ShmSize=2g
+# the container's systemd needs time to stop virt*d and let kvm-net-teardown.service remove virbr* (that unit has
+# TimeoutStopSec=15). With the default of 10 s it is killed halfway and virbr0 stays behind on the host
+StopTimeout=30
+Volume=@KVM_DATA_DIR@/var-libvirt:/var/lib/libvirt
+Volume=@KVM_DATA_DIR@/etc-libvirt:/etc/libvirt
+Volume=@KVM_DATA_DIR@/home:/home/@HOST_USER@
+# shared with kvm-gui; "kvm.sh prepare" empties its CONTENTS (never the directory itself) before every start
+Volume=@KVM_RUN_DIR@/libvirt:/run/libvirt
+# read from PID 1's environ inside the container. HOST_USER/HOST_UID/HOST_GID are required: without them
+# gui-user-setup creates no user at all and cockpit cannot be logged into
+Environment=HOST_USER=@HOST_USER@
+Environment=HOST_UID=@HOST_UID@
+Environment=HOST_GID=@HOST_GID@
+Environment=COCKPIT_LISTEN=@COCKPIT_BIND@:@COCKPIT_PORT@
+Environment=TZ=@TZ@
+# HOST_PASSWORD_HASH, written 0600 root on tmpfs by "kvm.sh prepare" just before the container is created and
+# removed again by the second ExecStartPost. The file always exists (empty when the host user has no usable
+# password: podman fails when --env-file is missing, and an empty value leaves the container user locked)
+EnvironmentFile=@KVM_RUN_DIR@/kvm.env
+
+[Service]
+# the values kvm.sh needs on the host side, frozen at install-service time. "./kvm.sh up" reads them back with
+# "systemctl show -p Environment" and warns when the caller's environment disagrees
+Environment=HOST_USER=@HOST_USER@ COCKPIT_BIND=@COCKPIT_BIND@ COCKPIT_PORT=@COCKPIT_PORT@ KVM_BRIDGE=@KVM_BRIDGE@ TZ=@TZ@
+# kvm module + /dev/kvm permissions, image check (never builds: that would block the boot), data/ seeding, host
+# network checks, an empty /run/libvirt and kvm.env. A failure here fails the unit, which is intended
+ExecStartPre="@KVM_SH@" prepare
+# wait for cockpit.socket + libvirt, sync the "bridged" network, log the cockpit URL. Deliberately non-fatal ("-"):
+# a readiness timeout must never tear down a container whose VMs are already running
+ExecStartPost=-"@KVM_SH@" ready
+ExecStartPost=-/usr/bin/rm -f @KVM_RUN_DIR@/kvm.env
+# covers prepare (data/ seeding on the first start) plus the container start plus up to 120 s of readiness polling
+TimeoutStartSec=300
+TimeoutStopSec=60
+# the container exits 0 on a clean shutdown (SIGRTMIN+3), so a manual "podman stop kvm" is not fought; only a crash
+# brings it back
+Restart=on-failure
+RestartSec=10
+
+# Quadlet-generated units cannot be enabled with "systemctl enable": this section is what makes the service start
+# at boot. For manual starts only, comment the two lines below out in the INSTALLED file and run daemon-reload
+# (install-service rewrites that file, so redo it whenever you re-run install-service)
+[Install]
+WantedBy=multi-user.target
