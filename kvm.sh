@@ -6,6 +6,7 @@
 #   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). cockpit: https://localhost:9091,
 #                             log in with your host user. After a host re-login, up recreates kvm-gui only (VMs keep running)
 #   ./kvm.sh down [kvm|gui]   stop and remove the containers (VM data stays in data/ under the repository)
+#                             up and down hand the kvm container over to systemctl once install-service has run
 #   ./kvm.sh firefox          open cockpit in the GUI container's firefox on the host display
 #   ./kvm.sh virt-manager     show virt-manager on the host display
 #   ./kvm.sh viewer <VM>      show a VM's screen with virt-viewer on the host display
@@ -16,12 +17,18 @@
 #   ./kvm.sh install-desktop  install .desktop entries and icons to launch from the Activities overview
 #   ./kvm.sh uninstall-desktop  remove the above
 #   ./kvm.sh launch <app>     used by the .desktop entries (firefox|virt-manager): runs via sudo -n, reports failures as desktop notifications
+#   ./kvm.sh install-service  run the kvm container as kvm-container.service (Quadlet): starts at boot, restarts on failure
+#   ./kvm.sh uninstall-service  remove the above (kvm-gui is never part of it: it needs the desktop session)
+#   ./kvm.sh prepare          internal: ExecStartPre of kvm-container.service (runs as root)
+#   ./kvm.sh ready            internal: ExecStartPost of kvm-container.service (runs as root)
 # Environment variables:
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9091  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see README)
 #   KVM_SOFTWARE_GL=1       force software rendering
+#   install-service freezes COCKPIT_BIND / COCKPIT_PORT / KVM_BRIDGE / TZ and the host user into the unit; a system
+#   service has no session to read them from at start time. Re-run install-service to change them
 # WSL2-specific behaviour (detection, WSLg runtime dir, /dev/kvm hint, software rendering) lives in host/wsl.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -32,19 +39,39 @@ KVM_IMAGE=localhost/kvm-container/kvm:latest   # libvirt + qemu-kvm + cockpit
 GUI_IMAGE=localhost/kvm-container/gui:latest   # firefox / virt-manager / virt-viewer
 KVM_CONTAINER=kvm
 GUI_CONTAINER=kvm-gui
-PODMAN="sudo podman"
 KVM_HOST=${KVM_HOST:-auto}
 COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
 COCKPIT_PORT=${COCKPIT_PORT:-9091}     # not cockpit's usual 9090: the host often runs its own cockpit there (see check_host_network)
 KVM_BRIDGE=${KVM_BRIDGE:-}             # host bridge for VMs on the host's segment (libvirt network "bridged"); empty = NAT only
-HOST_USER=$(id -un)                    # the containers' GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
-HOST_UID=$(id -u)
-HOST_GID=$(id -g)
 KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libvirt / home), inside the repository
 KVM_RUN_DIR=/run/kvm-container         # host directory shared by the containers: libvirt/ is /run/libvirt in both (on tmpfs, wiped by up/down)
 HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the GUI container
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-manager firefox"    # apps that get a .desktop entry (subcommand names of container/gui/gui)
+# the Quadlet unit for the kvm container: template in the repository, installed copy, and the unit the generator
+# makes from it. When the installed copy exists, systemd owns the container and up/down hand over to systemctl
+QUADLET_TEMPLATE=$PWD/quadlet/kvm-container.container
+QUADLET_FILE=/etc/containers/systemd/kvm-container.container
+QUADLET_UNIT=kvm-container.service
+
+# podman needs root. Normally that means sudo, but the Quadlet unit runs "kvm.sh prepare" / "ready" as root itself.
+# root has no session of its own, so the host user it works for arrives in HOST_USER (see require_host_user below)
+if [ "$(id -u)" = 0 ]; then
+  SUDO=; PODMAN=podman
+  HOST_USER=${HOST_USER:-}; HOST_UID=; HOST_GID=
+else
+  SUDO=sudo; PODMAN="sudo podman"
+  HOST_USER=$(id -un)                  # the containers' GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
+  HOST_UID=$(id -u)
+  HOST_GID=$(id -g)
+fi
+
+# resolve the host user's uid/gid when running as root (prepare / ready only); a no-op for a normal user
+require_host_user() {
+  [ -n "$HOST_USER" ] || { echo "!! HOST_USER is not set. Run kvm.sh as a regular user, or through $QUADLET_UNIT" >&2; exit 1; }
+  [ -n "$HOST_UID" ] || HOST_UID=$(id -u "$HOST_USER") || { echo "!! HOST_USER=$HOST_USER does not exist on this host" >&2; exit 1; }
+  [ -n "$HOST_GID" ] || HOST_GID=$(id -g "$HOST_USER")
+}
 
 # host-specific behaviour: generic defaults here; host/wsl.sh overrides them when running on WSL2
 host_kvm_missing_hint() {   # /dev/kvm is still missing after modprobe
@@ -65,13 +92,13 @@ ensure_kvm() {
   if [ ! -e /dev/kvm ]; then
     command -v modprobe >/dev/null || { echo "!! modprobe not found: sudo dnf install kmod" >&2; exit 1; }
     echo ">> loading kvm module"
-    if grep -q AuthenticAMD /proc/cpuinfo; then sudo modprobe kvm_amd; else sudo modprobe kvm_intel; fi
+    if grep -q AuthenticAMD /proc/cpuinfo; then $SUDO modprobe kvm_amd; else $SUDO modprobe kvm_intel; fi
   fi
   if [ ! -e /dev/kvm ]; then
     host_kvm_missing_hint
     exit 1
   fi
-  sudo chmod 666 /dev/kvm
+  $SUDO chmod 666 /dev/kvm
 }
 
 # build the podman arguments that describe the invoking host user: name and uid/gid (HOST_ARGS, both containers) and
@@ -82,21 +109,42 @@ ensure_kvm() {
 HOST_ARGS=()
 HASH_ARGS=()
 ENV_FILE=
-host_user_args() {
+QUADLET_TMP=      # like ENV_FILE: referenced by an EXIT trap, so it must not be a local
+# print the host user's password hash, or nothing (with a warning) when it cannot be used for a cockpit login.
+# getent may fail on hosts where the user comes from LDAP/SSSD; that must not abort the script, least of all when it
+# runs as an ExecStartPre at boot, so a lookup failure is treated as "no usable password"
+host_password_hash() {
   local hash
-  [ ${#HOST_ARGS[@]} -eq 0 ] || return 0     # already built
-  [ "$HOST_UID" != 0 ] || { echo "!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)" >&2; exit 1; }
-  HOST_ARGS=(-e "HOST_USER=$HOST_USER" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
-  hash=$(sudo getent shadow "$HOST_USER" | cut -d: -f2)
+  hash=$($SUDO getent shadow "$HOST_USER" 2>/dev/null | cut -d: -f2) || hash=
   case "$hash" in
     ""|"!"*|"*"*)
       echo "!! $HOST_USER has no usable password on the host; cockpit login will not work until one is set (passwd), then ./kvm.sh down kvm && ./kvm.sh up" >&2 ;;
     *)
-      ENV_FILE=$(mktemp)
-      trap 'rm -f "$ENV_FILE"' EXIT
-      printf 'HOST_PASSWORD_HASH=%s\n' "$hash" >"$ENV_FILE"
-      HASH_ARGS=(--env-file "$ENV_FILE") ;;
+      printf '%s' "$hash" ;;
   esac
+}
+
+host_user_args() {
+  local hash
+  [ ${#HOST_ARGS[@]} -eq 0 ] || return 0     # already built
+  # root is refused here, not in the dispatch: prepare / ready are run as root by the Quadlet unit and never get here
+  [ "$(id -u)" != 0 ] || { echo "!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)" >&2; exit 1; }
+  HOST_ARGS=(-e "HOST_USER=$HOST_USER" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
+  hash=$(host_password_hash)
+  if [ -n "$hash" ]; then
+    ENV_FILE=$(mktemp)
+    trap 'rm -f "$ENV_FILE"' EXIT
+    printf 'HOST_PASSWORD_HASH=%s\n' "$hash" >"$ENV_FILE"
+    HASH_ARGS=(--env-file "$ENV_FILE")
+  fi
+}
+
+# the same hash, for the Quadlet unit: written to a file on tmpfs that EnvironmentFile= (podman --env-file) reads.
+# The file is always created, and 0600 root before anything is written into it; the unit removes it again once the
+# container is up. An empty value is fine: gui-user-setup then leaves the container user locked
+write_env_file() {
+  $SUDO install -m 0600 -o root -g root -D /dev/null "$KVM_RUN_DIR/kvm.env"
+  printf 'HOST_PASSWORD_HASH=%s\n' "$(host_password_hash)" | $SUDO tee "$KVM_RUN_DIR/kvm.env" >/dev/null
 }
 
 # build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio, GPU) into the GUI container.
@@ -248,8 +296,8 @@ launch_error() {
 # directory layout, ownership). Unlike named volumes, bind mounts do not copy the image content on first use
 prepare_data_dir() {
   local dir=$1 src=$2
-  sudo mkdir -p "$dir"
-  if [ -n "$(sudo ls -A "$dir")" ]; then return 0; fi
+  $SUDO mkdir -p "$dir"
+  if [ -n "$($SUDO ls -A "$dir")" ]; then return 0; fi
   echo ">> seeding $dir from image $src"
   # cp inside a container (with podman cp, paths declared as VOLUME show up as empty anonymous volumes).
   # label=disable: the data directories live under the user's home (user_home_t) and are only ever used by containers
@@ -264,21 +312,57 @@ build_image() {   # build_image kvm|gui [podman build arguments]
   $PODMAN build --target "$role" -t "$(image_of "$role")" -f Containerfile "$@" .
 }
 
-# start the kvm container (libvirt/qemu/cockpit) unless it is running
-start_kvm() {
-  if running "$KVM_CONTAINER"; then echo ">> $KVM_CONTAINER is already running"; return 0; fi
+# everything the kvm container needs on the host before it can be created: the kvm module and /dev/kvm, the image
+# (seeding data/ runs a container from it), the persistent data directories and the host network checks.
+# Used by start_kvm and by the Quadlet ExecStartPre, which differ only in what a missing image means
+prepare_kvm() {   # prepare_kvm build|require
   ensure_kvm
-  host_user_args
-  $PODMAN image exists "$KVM_IMAGE" || build_image kvm
+  if ! $PODMAN image exists "$KVM_IMAGE"; then
+    # the service must never build: it would hold up the boot for as long as a full image build takes
+    [ "$1" = build ] || { echo "!! image $KVM_IMAGE not found. Run ./kvm.sh build kvm first" >&2; exit 1; }
+    build_image kvm
+  fi
   prepare_data_dir "$KVM_DATA_DIR/var-libvirt" /var/lib/libvirt
   prepare_data_dir "$KVM_DATA_DIR/etc-libvirt" /etc/libvirt
   prepare_data_dir "$KVM_DATA_DIR/home" /etc/skel
   check_host_network
-  $PODMAN rm -f -i "$KVM_CONTAINER" >/dev/null 2>&1 || true
+}
+
+# empty the run dir shared with the GUI container. Call this only once the old kvm container is gone: its shutdown
+# (kvm-net-teardown.service) talks to libvirt through the very sockets that live in here
+reset_run_dir() {
   # /run/libvirt is shared with the GUI container through a host directory (on tmpfs). Like the container's own /run it
   # must start empty: sockets, pid files and VM state of a previous run would confuse the daemons. Only the contents are
   # removed, never the directory: a running GUI container has it bind-mounted and would keep seeing the old inode
-  sudo mkdir -p "$KVM_RUN_DIR/libvirt" && sudo find "$KVM_RUN_DIR/libvirt" -mindepth 1 -delete
+  $SUDO mkdir -p "$KVM_RUN_DIR/libvirt" && $SUDO find "$KVM_RUN_DIR/libvirt" -mindepth 1 -delete
+}
+
+# wait until cockpit and libvirt answer inside the container, at most <attempts> seconds
+wait_kvm_ready() {   # wait_kvm_ready <attempts>
+  local _
+  for _ in $(seq 1 "$1"); do
+    $PODMAN exec "$KVM_CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1' && return 0
+    sleep 1
+  done
+  return 1
+}
+
+ready_message() {
+  if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
+    echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
+    echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-port=$COCKPIT_PORT/tcp --permanent && sudo firewall-cmd --reload"
+  else
+    echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
+  fi
+}
+
+# start the kvm container (libvirt/qemu/cockpit) unless it is running
+start_kvm() {
+  if running "$KVM_CONTAINER"; then echo ">> $KVM_CONTAINER is already running"; return 0; fi
+  prepare_kvm build
+  host_user_args
+  $PODMAN rm -f -i "$KVM_CONTAINER" >/dev/null 2>&1 || true
+  reset_run_dir
   # --network host: VMs can be bridged onto the host's segment. cockpit then listens on the host directly, so its
   # bind address/port is passed to the container (cockpit-listen generator) instead of using podman's -p
   $PODMAN run -d --name "$KVM_CONTAINER" --hostname "$KVM_CONTAINER" \
@@ -294,21 +378,9 @@ start_kvm() {
     -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
     "$KVM_IMAGE" >/dev/null
   echo ">> waiting for libvirt/cockpit..."
-  for _ in $(seq 1 30); do
-    if $PODMAN exec "$KVM_CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1'; then
-      sync_bridged_network
-      if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
-        echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
-        echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-port=$COCKPIT_PORT/tcp --permanent && sudo firewall-cmd --reload"
-      else
-        echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
-      fi
-      return 0
-    fi
-    sleep 1
-  done
-  echo "!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell" >&2
-  exit 1
+  wait_kvm_ready 30 || { echo "!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell" >&2; exit 1; }
+  sync_bridged_network
+  ready_message
 }
 
 # is the running GUI container the one for the current host session? Its podman arguments (socket paths, auth file,
@@ -335,7 +407,7 @@ start_gui() {
   host_user_args
   $PODMAN image exists "$GUI_IMAGE" || build_image gui
   $PODMAN rm -f -i "$GUI_CONTAINER" >/dev/null 2>&1 || true
-  sudo mkdir -p "$KVM_RUN_DIR/libvirt" "$KVM_DATA_DIR/var-libvirt" "$KVM_DATA_DIR/home"
+  $SUDO mkdir -p "$KVM_RUN_DIR/libvirt" "$KVM_DATA_DIR/var-libvirt" "$KVM_DATA_DIR/home"
   # unprivileged, but without SELinux label separation (label=disable): it connects to the unix sockets the privileged
   # kvm container creates in the shared /run/libvirt and reads the host session's runtime dir. --network host so that
   # firefox reaches cockpit on localhost and the VNC consoles on the host's loopback
@@ -353,6 +425,99 @@ start_gui() {
   echo ">> $GUI_CONTAINER started. host display: ./kvm.sh firefox | ./kvm.sh virt-manager"
 }
 
+# once install-service has put the unit in place, systemd owns the kvm container: up and down hand over to it
+# instead of running podman themselves, so that the container never has two owners
+quadlet_installed() { [ -e "$QUADLET_FILE" ]; }
+
+# read one of the values install-service baked into the unit. Asking systemd avoids parsing the .container file here
+quadlet_env() {   # quadlet_env <name>
+  systemctl show -p Environment --value "$QUADLET_UNIT" 2>/dev/null | tr ' ' '\n' | sed -n "s/^$1=//p" || true
+}
+
+# use the baked-in value and say so when the caller's environment disagrees. Adopting it (rather than just warning)
+# keeps the rest of the run consistent: start_gui passes COCKPIT_LISTEN on to kvm-gui, and firefox would otherwise
+# open a cockpit port that nothing is listening on
+quadlet_adopt() {   # quadlet_adopt <name> <value from the environment>
+  local baked
+  baked=$(quadlet_env "$1")
+  [ "$baked" = "$2" ] || echo "!! $1=$2 is ignored: $QUADLET_UNIT was installed with $1=$baked (./kvm.sh install-service to change it)" >&2
+  printf '%s' "$baked"
+}
+
+start_kvm_service() {
+  local baked_user
+  baked_user=$(quadlet_env HOST_USER)
+  if [ -z "$baked_user" ]; then
+    echo "!! $QUADLET_UNIT is not generated yet: run sudo systemctl daemon-reload (using the current environment instead)" >&2
+  else
+    COCKPIT_BIND=$(quadlet_adopt COCKPIT_BIND "$COCKPIT_BIND")
+    COCKPIT_PORT=$(quadlet_adopt COCKPIT_PORT "$COCKPIT_PORT")
+    KVM_BRIDGE=$(quadlet_adopt KVM_BRIDGE "$KVM_BRIDGE")
+    # not adopted: data/home is bind-mounted at /home/<user>, so another user needs a unit of their own
+    [ "$baked_user" = "$HOST_USER" ] || echo "!! $QUADLET_UNIT was installed for $baked_user, not $HOST_USER (./kvm.sh install-service to change it)" >&2
+  fi
+  echo ">> $KVM_CONTAINER is managed by systemd: starting $QUADLET_UNIT"
+  $SUDO systemctl start "$QUADLET_UNIT"
+  ready_message
+}
+
+# fill the template with the values in effect now and install it. Everything substituted here is frozen until the
+# next install-service, because a system service has no session to read them from at start time
+install_service() {
+  local left label
+  [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user who will own the VMs (the container user mirrors it)" >&2; exit 1; }
+  [ -d /run/systemd/system ] || { echo "!! systemd is not running on this host, so Quadlet cannot be used (WSL2: set [boot] systemd=true in /etc/wsl.conf)" >&2; exit 1; }
+  [ -r "$QUADLET_TEMPLATE" ] || { echo "!! template not found: $QUADLET_TEMPLATE" >&2; exit 1; }
+  $PODMAN image exists "$KVM_IMAGE" || build_image kvm   # the service itself never builds (it must not delay the boot)
+  QUADLET_TMP=$(mktemp); trap 'rm -f "$QUADLET_TMP"' EXIT
+  sed -e "s|@CONTAINER@|$KVM_CONTAINER|g" -e "s|@IMAGE@|$KVM_IMAGE|g" \
+      -e "s|@HOST_USER@|$HOST_USER|g" -e "s|@HOST_UID@|$HOST_UID|g" -e "s|@HOST_GID@|$HOST_GID|g" \
+      -e "s|@COCKPIT_BIND@|$COCKPIT_BIND|g" -e "s|@COCKPIT_PORT@|$COCKPIT_PORT|g" \
+      -e "s|@KVM_BRIDGE@|$KVM_BRIDGE|g" -e "s|@TZ@|${TZ:-Asia/Tokyo}|g" \
+      -e "s|@KVM_DATA_DIR@|$KVM_DATA_DIR|g" -e "s|@KVM_RUN_DIR@|$KVM_RUN_DIR|g" \
+      -e "s|@KVM_SH@|$PWD/kvm.sh|g" -e "s|@REPO_DIR@|$PWD|g" \
+      "$QUADLET_TEMPLATE" >"$QUADLET_TMP"
+  left=$(grep -o '@[A-Z_]*@' "$QUADLET_TMP" | sort -u | tr '\n' ' ') || left=   # no match is the good case
+  [ -z "$left" ] || { echo "!! the template has placeholders this version of kvm.sh does not fill: $left" >&2; exit 1; }
+  $SUDO install -D -m 0644 -o root -g root "$QUADLET_TMP" "$QUADLET_FILE"
+  if command -v restorecon >/dev/null 2>&1; then $SUDO restorecon -F "$QUADLET_FILE" || true; fi
+  # EnvironmentFile= (podman --env-file) must exist by the time the container is created; prepare rewrites it
+  $SUDO install -m 0600 -o root -g root -D /dev/null "$KVM_RUN_DIR/kvm.env"
+  $SUDO systemctl daemon-reload
+  systemctl cat "$QUADLET_UNIT" >/dev/null 2>&1 || {
+    echo "!! $QUADLET_UNIT was not generated from $QUADLET_FILE. Check the podman version (Quadlet needs 4.4 or newer) with" >&2
+    echo "   sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun" >&2
+    exit 1; }
+  echo ">> installed: $QUADLET_FILE -> $QUADLET_UNIT (starts at boot)"
+  echo ">> sudo systemctl start|stop|restart|status kvm-container   journalctl -u kvm-container"
+  echo ">> ./kvm.sh up and down now hand the $KVM_CONTAINER container over to systemctl"
+  echo ">> baked in until the next install-service: HOST_USER=$HOST_USER COCKPIT_BIND=$COCKPIT_BIND COCKPIT_PORT=$COCKPIT_PORT KVM_BRIDGE=${KVM_BRIDGE:-(none)} TZ=${TZ:-Asia/Tokyo}"
+  echo ">> $GUI_CONTAINER stays outside systemd (it needs the desktop session): keep using ./kvm.sh up gui"
+  if running "$KVM_CONTAINER"; then
+    echo "!! $KVM_CONTAINER is running right now. Run ./kvm.sh down kvm first, or the port check in prepare will find" >&2
+    echo "   the cockpit of that very container and refuse to start the service" >&2
+  fi
+  # ExecStartPre runs kvm.sh straight out of the repository. Under a home directory it is labelled user_home_t,
+  # which systemd (init_t) is not allowed to execute on an Enforcing host
+  if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" = Enforcing ]; then
+    label=$(ls -Zd "$PWD/kvm.sh" 2>/dev/null) || label=
+    case "$label" in
+      *:bin_t:*|*:shell_exec_t:*) ;;
+      *) echo "!! SELinux is Enforcing and $PWD/kvm.sh is not labelled bin_t, so systemd may not be allowed to run it." >&2
+         echo "   If the service fails with \"Failed at step EXEC\": sudo semanage fcontext -a -t bin_t '$PWD/kvm.sh' && sudo restorecon -v '$PWD/kvm.sh'" >&2 ;;
+    esac
+  fi
+}
+
+uninstall_service() {
+  [ "$(id -u)" != 0 ] || { echo "!! run this without sudo" >&2; exit 1; }
+  quadlet_installed || { echo ">> $QUADLET_FILE is not installed"; exit 0; }
+  $SUDO systemctl stop "$QUADLET_UNIT" || true
+  $SUDO rm -f "$QUADLET_FILE"
+  $SUDO systemctl daemon-reload
+  echo ">> removed: $QUADLET_FILE (./kvm.sh up starts the container with podman again)"
+}
+
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 cmd=${1:-help}; shift || true
@@ -365,7 +530,7 @@ case "$cmd" in
   up)
     [ $# -eq 0 ] || { usage >&2; exit 1; }
     case "$role" in
-      ""|kvm) start_kvm ;;
+      ""|kvm) if quadlet_installed; then start_kvm_service; else start_kvm; fi ;;
     esac
     case "$role" in
       "")  if have_display; then start_gui; else echo ">> no display found: GUI disabled, use cockpit in a browser"; fi ;;
@@ -376,17 +541,22 @@ case "$cmd" in
   down)
     [ $# -eq 0 ] || { usage >&2; exit 1; }
     case "$role" in ""|gui) $PODMAN rm -f -i -t 10 "$GUI_CONTAINER" ;; esac
-    case "$role" in ""|kvm) $PODMAN rm -f -i -t 10 "$KVM_CONTAINER" ;; esac
-    [ -n "$role" ] || sudo rm -rf "$KVM_RUN_DIR"
+    # -t 30 matches the unit's StopTimeout: the container's systemd needs that long to let kvm-net-teardown
+    # remove virbr* before it is killed
+    case "$role" in ""|kvm)
+      if quadlet_installed; then $SUDO systemctl stop "$QUADLET_UNIT"
+      else $PODMAN rm -f -i -t 30 "$KVM_CONTAINER"; fi ;;
+    esac
+    [ -n "$role" ] || $SUDO rm -rf "$KVM_RUN_DIR"
     ;;
   clean)  "$0" down
           [ -d "$KVM_DATA_DIR" ] || { echo ">> $KVM_DATA_DIR does not exist"; exit 0; }
-          echo ">> to be removed: $KVM_DATA_DIR"; sudo du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
+          echo ">> to be removed: $KVM_DATA_DIR"; $SUDO du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
           if [ "${KVM_CLEAN_YES:-0}" != 1 ]; then
             read -r -p "This deletes the VM disks and definitions as well. Continue? [y/N] " ans
             [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> aborted"; exit 1; }
           fi
-          sudo rm -rf "$KVM_DATA_DIR" ;;
+          $SUDO rm -rf "$KVM_DATA_DIR" ;;
   firefox|virt-manager|viewer)
     have_display || { echo "!! no display found: use cockpit in a browser (https://$COCKPIT_BIND:$COCKPIT_PORT)" >&2; exit 2; }
     "$0" up          # starts what is missing, recreates the GUI container after a host re-login
@@ -449,6 +619,26 @@ case "$cmd" in
     desktop_dirs
     for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
     echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/{virt-manager,firefox}.*"
+    ;;
+  install-service)    install_service ;;
+  uninstall-service)  uninstall_service ;;
+  prepare)
+    require_host_user
+    # ExecStartPre of kvm-container.service (root). Everything the container needs on the host, then the password
+    # hash for --env-file. The old container is already gone here (systemd stopped it; podman run --replace
+    # handles a leftover), so emptying the run dir cannot cut short anyone's shutdown
+    prepare_kvm require
+    reset_run_dir
+    write_env_file
+    ;;
+  ready)
+    require_host_user
+    # ExecStartPost of kvm-container.service (root), and non-fatal there: a slow host must not cost us the
+    # container. More patient than the interactive path, which has a user watching it
+    echo ">> waiting for libvirt/cockpit..."
+    wait_kvm_ready 120 || { echo "!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell" >&2; exit 1; }
+    sync_bridged_network
+    ready_message
     ;;
   *)      usage ;;
 esac

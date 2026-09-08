@@ -79,6 +79,8 @@ KVM_BRIDGE=br0 ./kvm.sh up   # VM をホストのブリッジ br0 に接続で�
 ./kvm.sh clean          # コンテナと data/ のデータをすべて削除 (確認あり)
 ./kvm.sh install-desktop    # アクティビティ (アプリ一覧) から virt-manager / Firefox を起動できるようにする (後述)
 ./kvm.sh uninstall-desktop  # 上記の解除
+./kvm.sh install-service    # kvm コンテナを systemd サービス (Quadlet) にしてブート時に自動起動する (後述)
+./kvm.sh uninstall-service  # 上記の解除
 ```
 
 `up` は足りないイメージを自動でビルドします。`firefox` / `virt-manager` / `viewer` は先に `up` を実行するので、
@@ -97,6 +99,10 @@ cockpit はホストのブラウザからも `https://localhost:9091` で開け�
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
 | `KVM_BRIDGE` | 未設定 | ホストの既存ブリッジ名 (例 `br0`)。libvirt ネットワーク `bridged` として登録し、VM をホストと同じセグメントに接続できる (後述) |
+
+`install-service` を使う場合、`COCKPIT_BIND` / `COCKPIT_PORT` / `KVM_BRIDGE` / `TZ` と実行ユーザーは
+**登録した時点の値がユニットに焼き込まれます**。システムサービスにはそれらを読み取るセッションが無いためです。
+以後 `up` に環境変数を付けても無視され (警告が出ます)、変更するには `install-service` をやり直します。
 
 ## 構成
 
@@ -144,6 +150,7 @@ cockpit はホストのブラウザからも `https://localhost:9091` で開け�
 | `container/kvm/kvm-net-teardown.service` | コンテナ停止時に libvirt のネットワークを `net-destroy` し、ホスト側に `virbr0` などを残さない |
 | `container/gui/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使い、`/dev/dri/renderD*` を開けるようにする |
 | `desktop/kvm-virt-manager.desktop` `desktop/kvm-firefox.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
+| `quadlet/kvm-container.container` | Quadlet のテンプレート。`kvm.sh install-service` が `@...@` を埋めて `/etc/containers/systemd/` に配置し、podman の generator が `kvm-container.service` を作る (`kvm` コンテナのみ) |
 
 ### 表示の仕組み
 
@@ -188,6 +195,53 @@ cockpit はホストのブラウザからも `https://localhost:9091` で開け�
   SELinux が Enforcing のホストでも `:Z` などのラベル付けは不要です
 - `./kvm.sh clean` は確認のうえ `data/` ごと削除します
 - `/run/kvm-container` (libvirt のソケット共有用) は永続化されず、`up` で作り直し `down` で消します
+
+## ブート時に自動起動する (systemd / Quadlet)
+
+`kvm` コンテナを podman の Quadlet で systemd サービスにすると、**ホストのブート時に自動起動**し、
+`systemctl` で扱えるようになります (異常終了したら自動で再起動します)。
+`kvm-gui` は対象外です。デスクトップのセッション (Wayland ソケット、`XAUTHORITY`) に依存していて
+静的なユニットに書けず、そもそもログイン前に起動しても意味がないためです。
+
+```bash
+./kvm.sh build kvm          # サービスはビルドしません (ブートを止めないため)。先に作っておきます
+./kvm.sh down kvm           # 手で起動したままだと、下の start がそのコンテナの cockpit をポート衝突と見て失敗します
+./kvm.sh install-service
+sudo systemctl start kvm-container
+systemctl status kvm-container
+journalctl -u kvm-container          # 起動ログ (コンテナ内 PID 1 の出力もここに入ります)
+sudo systemctl stop kvm-container    # コンテナ停止・削除 (VM のディスク/定義は data/ に残ります)
+./kvm.sh uninstall-service           # 解除。以後 up は従来どおり podman でコンテナを起動します
+```
+
+登録すると `./kvm.sh up` / `down` は `kvm` コンテナを `systemctl` に委譲します
+(同じコンテナを systemd と手動の podman が二重に管理しないようにするためです)。
+`up gui` / `firefox` / `virt-manager` / `viewer` / `virsh` / `shell` / `logs` は今までどおりです。
+
+| 置かれるもの | 内容 |
+| --- | --- |
+| `/etc/containers/systemd/kvm-container.container` | テンプレートの `@...@` を埋めたもの (root、0644) |
+| `kvm-container.service` | 上のファイルから podman の generator が `daemon-reload` のたびに作るユニット (実体はディスクに無い) |
+| `/run/kvm-container/kvm.env` | ホストユーザーのパスワードハッシュ (root、0600、tmpfs)。`prepare` が起動のたびに書き、コンテナが上がったら消します |
+
+- **`systemctl enable` / `disable` は使えません。** generator が作ったユニットなので systemd が拒否します。
+  自動起動はテンプレートの `[Install] WantedBy=multi-user.target` で有効になっています
+  (`ls /run/systemd/generator/multi-user.target.wants/kvm-container.service` で確認できます)。
+  手動起動だけにしたい場合は、置かれたファイルの `[Install]` の 2 行をコメントアウトして `daemon-reload` します
+- 設定 (`COCKPIT_BIND` / `COCKPIT_PORT` / `KVM_BRIDGE` / `TZ`、ホストユーザー) を変えるときは環境変数を付けて
+  `install-service` をやり直し、`sudo systemctl restart kvm-container` します
+  (例: `COCKPIT_BIND=0.0.0.0 ./kvm.sh install-service`)
+- `systemctl stop kvm-container` は `kvm-gui` を止めません。両方止めるなら `./kvm.sh down` を使ってください
+- **リポジトリの置き場所**: `data/` はリポジトリの中にあるので、ブート時にそのファイルシステムがマウント済みである必要があります
+  (ユニットの `RequiresMountsFor=` で待ちます)。ログイン時に復号・マウントされるホームディレクトリ
+  (systemd-homed / fscrypt / eCryptfs など) ではブート時起動は成立しないので、リポジトリを `/srv/kvm-container` など
+  `/home` の外に置いてください
+- **SELinux が Enforcing のとき**: ホームディレクトリ配下の `kvm.sh` は `user_home_t` なので、systemd が実行できず
+  `Failed at step EXEC` になることがあります。`install-service` がその可能性を検出したら次を案内します:
+  `sudo semanage fcontext -a -t bin_t '<リポジトリ>/kvm.sh' && sudo restorecon -v '<リポジトリ>/kvm.sh'`
+- **WSL2 では使えません** (`/etc/wsl.conf` に `[boot]` / `systemd=true` を書いて systemd を PID 1 にすれば使えますが未検証)。
+  `install-service` は systemd が動いていなければ中止します
+- podman 4.4 以降が必要です (Quadlet の導入バージョン)
 
 ## アクティビティ (アプリ一覧) から起動する
 
@@ -276,6 +330,8 @@ NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
 - RHEL 10 系の qemu-kvm には SPICE がないため、グラフィックスは VNC を使っています。
 - ホストユーザーにパスワードが設定されていない (ロックされている) と cockpit にログインできません。`passwd` で設定してから
   `./kvm.sh down kvm` → `./kvm.sh up` してください (`up` 時に警告が出ます)。`kvm.sh` は root ではなく一般ユーザーで実行してください。
+- `install-service` で登録している間は `kvm` コンテナの持ち主は systemd です。`sudo podman rm kvm` のように直接消さず、
+  `sudo systemctl stop kvm-container` (または `./kvm.sh down`) を使ってください。`systemctl stop` は `kvm-gui` を止めません。
 - コンテナ名は `kvm` と `kvm-gui` に固定です (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は WSL がホスト名に使うため避けています)。
 - 1 コンテナ構成の頃から更新する場合は、`./kvm.sh down` で古い `kvm` コンテナを消してから `./kvm.sh build && ./kvm.sh up` してください
   (古いコンテナは `/run/libvirt` を共有していないので、動いたままだと `kvm-gui` から libvirt に届きません)。
@@ -299,6 +355,31 @@ sudo ausearch -m avc -ts recent                        # SELinux 拒否が無い
 # GNOME からログアウト → 再ログイン → 端末で:
 ./kvm.sh up                                            # kvm-gui だけが作り直され、./kvm.sh virsh list の VM が動いたままであること
 ./kvm.sh down; ip link show virbr0; ls /run/kvm-container   # どちらも残っていないこと
+```
+
+Quadlet (`install-service`) を触ったときは続けて:
+
+```bash
+./kvm.sh build kvm && ./kvm.sh down kvm
+./kvm.sh install-service
+sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun   # 生成される podman run を目視
+systemctl cat kvm-container.service                    # Type=notify / ExecStart / ExecStop が出ること
+ls -l /run/systemd/generator/multi-user.target.wants/kvm-container.service  # [Install] が効いていること
+ls -Z /etc/containers/systemd/kvm-container.container ./kvm.sh              # SELinux ラベル
+
+sudo systemctl start kvm-container && systemctl is-active kvm-container
+sudo podman exec kvm systemctl is-system-running       # running (degraded ではない) = Quadlet の --cgroups=split でも壊れていない
+sudo podman exec kvm getent passwd "$USER"             # ユニットの HOST_USER でユーザーが作られていること
+sudo podman exec kvm id -u "$USER"                     # ホストの uid と一致すること
+sudo ls -l /run/kvm-container/kvm.env                  # 起動完了後は残っていないこと
+sudo podman inspect -f '{{.Created}}' kvm; ./kvm.sh up; sudo podman inspect -f '{{.Created}}' kvm  # 同じ値 = 作り直していない
+COCKPIT_PORT=9099 ./kvm.sh up                          # !! COCKPIT_PORT=9099 is ignored: ... の警告が出ること
+./kvm.sh up gui && ./kvm.sh firefox                    # 後から GUI を足しても kvm は再起動せず、cockpit にログインできること
+
+time sudo systemctl stop kvm-container; ip link show virbr0   # 30 秒以内に止まり、virbr0 が残らないこと
+sudo reboot                                            # 再ログインせずに systemctl is-active kvm-container と ./kvm.sh virsh list
+sudo podman kill -s SIGKILL kvm                        # 10 秒後に自動で再起動すること (journalctl -u kvm-container -f)
+./kvm.sh uninstall-service && ./kvm.sh up              # 従来の podman 起動に戻ること
 ```
 
 ### Windows + WSL2 での確認手順
