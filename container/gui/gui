@@ -16,7 +16,15 @@ if [ -z "$GUI_USER" ]; then
   echo "!! gui: HOST_USER is not set, so no GUI user exists (start this container with ./kvm.sh up)" >&2
   exit 1
 fi
-GUI_UID=$(id -u "$GUI_USER")
+# gui-user.service creates that user while the container boots, and kvm.sh starts an app right after podman run:
+# wait for the unit (starting it waits for the job already running and does nothing once it has finished)
+if ! id -u "$GUI_USER" >/dev/null 2>&1; then
+  timeout 60 systemctl start gui-user.service >/dev/null 2>&1 || true
+fi
+if ! GUI_UID=$(id -u "$GUI_USER" 2>/dev/null); then
+  echo "!! gui: the GUI user $GUI_USER was not created (see ./kvm.sh logs gui)" >&2
+  exit 1
+fi
 GUI_GID=$(id -g "$GUI_USER")
 HOST_RUNTIME_DIR=${HOST_RUNTIME_DIR:-/run/host-xdg-runtime}
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
@@ -58,7 +66,8 @@ if [ "${1:-}" = "virt-viewer" ]; then
   cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
 fi
 
-# right after the container starts, wait for gui-user's uid alignment (returns immediately in steady state)
+# right after the container starts, wait for the rest of the boot: logind has to be up before user@<uid>.service can
+# start (gui-user.service, which the GUI user comes from, was already waited for above; no-op in steady state)
 timeout 60 systemctl is-system-running --wait >/dev/null 2>&1 || true
 # the GUI user's systemd --user instance provides /run/user/<uid> and the session bus. logind starts it at boot because
 # the user lingers; start it here as well in case logind has not got to it yet (a no-op when it is already running)

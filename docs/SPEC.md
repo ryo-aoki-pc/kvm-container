@@ -870,7 +870,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  a["podman exec kvm-gui gui app args"] --> b["GUI_USER = 環境変数 GUI_USER → PID 1 の HOST_USER (どちらも空なら !! HOST_USER is not set で exit 1)<br/>id で uid / gid を取得"]
+  a["podman exec kvm-gui gui app args"] --> b["GUI_USER = 環境変数 GUI_USER → PID 1 の HOST_USER (どちらも空なら !! HOST_USER is not set で exit 1)<br/>そのユーザーがまだ居なければ timeout 60 systemctl start gui-user.service で作成を待つ<br/>id で uid / gid を取得 (それでも居なければ !! gui: the GUI user ... was not created で exit 1)"]
   b --> c{"DISPLAY と WAYLAND_DISPLAY が両方とも空か"}
   c -->|"はい"| c1["!! GUI unavailable: the container was started without a display (headless)<br/>exit 2"]
   c -->|"いいえ"| d["環境設定: XDG_RUNTIME_DIR=/run/user/UID、MOZ_ENABLE_WAYLAND=1、<br/>GDK_BACKEND=wayland,x11、GSETTINGS_BACKEND=keyfile、LANG (既定 ja_JP.UTF-8)、LIBGL_ALWAYS_SOFTWARE (渡されたときのみ)"]
@@ -884,7 +884,7 @@ flowchart TD
   g -->|"その他"| g3["そのまま実行"]
   g1 --> h
   g2 --> h
-  g3 --> h["timeout 60 systemctl is-system-running --wait (gui-user の uid 合わせを待つ)<br/>timeout 30 systemctl start user@UID.service (失敗は無視)"]
+  g3 --> h["timeout 60 systemctl is-system-running --wait (logind など残りの起動を待つ)<br/>timeout 30 systemctl start user@UID.service (失敗は無視)"]
   h --> i{"/run/user/UID があるか"}
   i -->|"いいえ"| i1["gui: user@UID.service did not provide ... creating it<br/>install -d -m 700 (session bus 無し)"] --> j
   i -->|"はい"| j{"/run/user/UID/bus があるか"}
