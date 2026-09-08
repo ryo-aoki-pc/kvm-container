@@ -266,7 +266,6 @@ build_image() {   # build_image kvm|gui [podman build arguments]
 
 # start the kvm container (libvirt/qemu/cockpit) unless it is running
 start_kvm() {
-  local i
   if running "$KVM_CONTAINER"; then echo ">> $KVM_CONTAINER is already running"; return 0; fi
   ensure_kvm
   host_user_args
@@ -295,7 +294,7 @@ start_kvm() {
     -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
     "$KVM_IMAGE" >/dev/null
   echo ">> waiting for libvirt/cockpit..."
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if $PODMAN exec "$KVM_CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1'; then
       sync_bridged_network
       if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
@@ -318,6 +317,8 @@ start_kvm() {
 # sockets gone, while the new session lives in a fresh one
 gui_session_matches() {   # gui_session_matches <session id>
   [ "$($PODMAN inspect -f '{{index .Config.Labels "kvm.gui-session"}}' "$GUI_CONTAINER")" = "$1" ] || return 1
+  # single quotes on purpose: the variables are expanded by the shell inside the container, not here
+  # shellcheck disable=SC2016
   $PODMAN exec "$GUI_CONTAINER" sh -c '{ [ -z "${WAYLAND_DISPLAY:-}" ] || [ -S "$WAYLAND_DISPLAY" ]; } && { [ -z "${XAUTHORITY:-}" ] || [ -r "$XAUTHORITY" ]; }'
 }
 
@@ -438,7 +439,7 @@ case "$cmd" in
       sed "s|@KVM_SH@|$PWD/kvm.sh|g" "$DESKTOP_TEMPLATE_DIR/kvm-$app.desktop" >"$DESKTOP_DIR/kvm-$app.desktop"
       ls "$ICON_DIR"/hicolor/*/apps/"$app".* >/dev/null 2>&1 || echo ">> (could not extract the $app icon; a generic icon will be shown)"
     done
-    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$DESKTOP_DIR" || true
+    if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q "$DESKTOP_DIR" || true; fi
     echo ">> installed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/"
     echo ">> search for \"Virtual Machine Manager\" / \"Firefox\" in the Activities overview to launch them (start the containers with ./kvm.sh up first;"
     echo ">>  launch runs sudo -n podman, so passwordless sudo for podman must be configured)"

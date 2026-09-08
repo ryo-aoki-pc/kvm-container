@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # WSL2 (WSLg) specifics for kvm.sh. kvm.sh sources this file unconditionally, after defining the generic host_* hooks;
 # the hooks are overridden only when WSL2 is detected, so nothing in here affects other hosts.
 # KVM_HOST=wsl forces WSL2 mode, KVM_HOST=generic|headless disables the detection (auto: detect)
