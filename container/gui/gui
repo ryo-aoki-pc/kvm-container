@@ -3,7 +3,6 @@
 # host display (Wayland/X11). libvirt runs in the kvm container: the apps reach it through /run/libvirt, which is a
 # host directory shared by both containers (see kvm.sh), and the GUI user is in the libvirt group that owns the sockets
 #   gui firefox            -> opens cockpit (served by the kvm container on the host's network)
-#   gui virt-manager
 #   gui virt-viewer <vm>
 # DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts, as absolute paths
 # into the read-only mounts of the host session (the host's XDG_RUNTIME_DIR is mounted at HOST_RUNTIME_DIR).

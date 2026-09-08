@@ -1,13 +1,12 @@
 #!/bin/bash
 # Helper script for the qemu-kvm/libvirt/cockpit containers (AlmaLinux 10): "kvm" runs libvirt + qemu-kvm + cockpit
-# (privileged), "kvm-gui" runs firefox / virt-manager / virt-viewer on the host display (unprivileged, only with a display)
+# (privileged), "kvm-gui" runs firefox / virt-viewer on the host display (unprivileged, only with a display)
 # Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (cockpit only)
 #   ./kvm.sh build [kvm|gui]  build the images (both by default; extra arguments go to podman build)
 #   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). cockpit: https://localhost:9091,
 #                             log in with your host user. After a host re-login, up recreates kvm-gui only (VMs keep running)
 #   ./kvm.sh down [kvm|gui]   stop and remove the containers (VM data stays in data/ under the repository)
 #   ./kvm.sh firefox          open cockpit in the GUI container's firefox on the host display
-#   ./kvm.sh virt-manager     show virt-manager on the host display
 #   ./kvm.sh viewer <VM>      show a VM's screen with virt-viewer on the host display
 #   ./kvm.sh virsh ...        run virsh inside the kvm container
 #   ./kvm.sh shell [kvm|gui]  root shell inside a container (default: kvm)
@@ -15,7 +14,7 @@
 #   ./kvm.sh clean            remove the containers and everything under data/ (asks for confirmation)
 #   ./kvm.sh install-desktop  install .desktop entries and icons to launch from the Activities overview
 #   ./kvm.sh uninstall-desktop  remove the above
-#   ./kvm.sh launch <app>     used by the .desktop entries (firefox|virt-manager): runs via sudo -n, reports failures as desktop notifications
+#   ./kvm.sh launch <app>     used by the .desktop entries (firefox): runs via sudo -n, reports failures as desktop notifications
 # Environment variables:
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
 #   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9091  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
@@ -29,7 +28,7 @@ cd "$(dirname "$0")"
 # two images (targets of the multi-stage Containerfile) and two containers. Names are fixed; the variable is not NAME
 # because WSL uses NAME for the hostname
 KVM_IMAGE=localhost/kvm-container/kvm:latest   # libvirt + qemu-kvm + cockpit
-GUI_IMAGE=localhost/kvm-container/gui:latest   # firefox / virt-manager / virt-viewer
+GUI_IMAGE=localhost/kvm-container/gui:latest   # firefox / virt-viewer
 KVM_CONTAINER=kvm
 GUI_CONTAINER=kvm-gui
 PODMAN="sudo podman"
@@ -44,7 +43,7 @@ KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libv
 KVM_RUN_DIR=/run/kvm-container         # host directory shared by the containers: libvirt/ is /run/libvirt in both (on tmpfs, wiped by up/down)
 HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the GUI container
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
-DESKTOP_APPS="virt-manager firefox"    # apps that get a .desktop entry (subcommand names of container/gui/gui)
+DESKTOP_APPS="firefox"                 # apps that get a .desktop entry (subcommand names of container/gui/gui)
 
 # host-specific behaviour: generic defaults here; host/wsl.sh overrides them when running on WSL2
 host_kvm_missing_hint() {   # /dev/kvm is still missing after modprobe
@@ -236,6 +235,12 @@ desktop_dirs() {
   ICON_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/icons
 }
 
+# drop the virt-manager launcher an older revision of this repository installed: it is no longer shipped, and its
+# Exec (kvm.sh launch virt-manager) would only fail. Call after desktop_dirs
+remove_legacy_desktop() {
+  rm -f "$DESKTOP_DIR/kvm-virt-manager.desktop" "$ICON_DIR"/hicolor/*/apps/virt-manager.* 2>/dev/null || true
+}
+
 # report a launch (.desktop) failure as a desktop notification; stderr only if no notification tool is available
 launch_error() {
   echo "!! $*" >&2
@@ -335,7 +340,7 @@ start_gui() {
   host_user_args
   $PODMAN image exists "$GUI_IMAGE" || build_image gui
   $PODMAN rm -f -i "$GUI_CONTAINER" >/dev/null 2>&1 || true
-  sudo mkdir -p "$KVM_RUN_DIR/libvirt" "$KVM_DATA_DIR/var-libvirt" "$KVM_DATA_DIR/home"
+  sudo mkdir -p "$KVM_RUN_DIR/libvirt" "$KVM_DATA_DIR/home"
   # unprivileged, but without SELinux label separation (label=disable): it connects to the unix sockets the privileged
   # kvm container creates in the shared /run/libvirt and reads the host session's runtime dir. --network host so that
   # firefox reaches cockpit on localhost and the VNC consoles on the host's loopback
@@ -343,14 +348,13 @@ start_gui() {
     --systemd=always --network host --security-opt label=disable \
     --label "kvm.gui-session=$session" \
     -e "COCKPIT_LISTEN=$COCKPIT_BIND:$COCKPIT_PORT" \
-    -v "$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt:ro" \
     -v "$KVM_DATA_DIR/home:/home/$HOST_USER" \
     -v "$KVM_RUN_DIR/libvirt:/run/libvirt" \
     "${HOST_ARGS[@]}" \
     "${GUI_ARGS[@]}" \
     -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
     "$GUI_IMAGE" >/dev/null
-  echo ">> $GUI_CONTAINER started. host display: ./kvm.sh firefox | ./kvm.sh virt-manager"
+  echo ">> $GUI_CONTAINER started. host display: ./kvm.sh firefox | ./kvm.sh viewer <VM>"
 }
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -387,7 +391,7 @@ case "$cmd" in
             [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> aborted"; exit 1; }
           fi
           sudo rm -rf "$KVM_DATA_DIR" ;;
-  firefox|virt-manager|viewer)
+  firefox|viewer)
     have_display || { echo "!! no display found: use cockpit in a browser (https://$COCKPIT_BIND:$COCKPIT_PORT)" >&2; exit 2; }
     "$0" up          # starts what is missing, recreates the GUI container after a host re-login
     [ "$cmd" != viewer ] || cmd=virt-viewer
@@ -410,7 +414,7 @@ case "$cmd" in
     # for .desktop entries (Activities). There is no terminal to ask for the sudo password, so podman is run with sudo -n;
     # passwordless sudo for podman must be configured beforehand
     app=${1:-}
-    case "$app" in firefox|virt-manager) ;; *) echo "usage: $0 launch firefox|virt-manager" >&2; exit 1 ;; esac
+    case "$app" in firefox) ;; *) echo "usage: $0 launch firefox" >&2; exit 1 ;; esac
     if ! err=$(sudo -n podman exec "$GUI_CONTAINER" gui "$app" 2>&1); then
       case "$err" in
         *password*) hint="configure passwordless sudo for podman (launch runs sudo -n without a terminal)" ;;
@@ -425,30 +429,29 @@ case "$cmd" in
     [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user logged in to the desktop" >&2; exit 1; }
     desktop_dirs
     $PODMAN image exists "$GUI_IMAGE" || build_image gui
-    # 1) icons: extract only the virt-manager / firefox icons from hicolor in the GUI image (a generic icon is shown if this fails)
+    # 1) icons: extract only the firefox icons from hicolor in the GUI image (a generic icon is shown if this fails)
     mkdir -p "$ICON_DIR" "$DESKTOP_DIR"
     (set +o pipefail
      $PODMAN run --rm --network none "$GUI_IMAGE" sh -c \
-       'cd /usr/share/icons && find hicolor -type f \( -path "*/apps/virt-manager.*" -o -path "*/apps/firefox.*" \) | tar -cf - -T -' \
+       'cd /usr/share/icons && find hicolor -type f -path "*/apps/firefox.*" | tar -cf - -T -' \
        | tar -xf - -C "$ICON_DIR") 2>/dev/null || true
-    # 2) .desktop entries (skip the virt-manager entry when the image has no virt-manager, i.e. not available from EPEL)
+    # 2) .desktop entries
+    remove_legacy_desktop
     for app in $DESKTOP_APPS; do
-      if [ "$app" = virt-manager ] && ! $PODMAN run --rm --network none "$GUI_IMAGE" test -x /usr/bin/virt-manager; then
-        echo ">> virt-manager is not in the image; skipping kvm-virt-manager.desktop"; continue
-      fi
       sed "s|@KVM_SH@|$PWD/kvm.sh|g" "$DESKTOP_TEMPLATE_DIR/kvm-$app.desktop" >"$DESKTOP_DIR/kvm-$app.desktop"
       ls "$ICON_DIR"/hicolor/*/apps/"$app".* >/dev/null 2>&1 || echo ">> (could not extract the $app icon; a generic icon will be shown)"
     done
     if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q "$DESKTOP_DIR" || true; fi
     echo ">> installed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/"
-    echo ">> search for \"Virtual Machine Manager\" / \"Firefox\" in the Activities overview to launch them (start the containers with ./kvm.sh up first;"
+    echo ">> search for \"Firefox\" in the Activities overview to launch it (start the containers with ./kvm.sh up first;"
     echo ">>  launch runs sudo -n podman, so passwordless sudo for podman must be configured)"
     ;;
   uninstall-desktop)
     [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user who ran install-desktop" >&2; exit 1; }
     desktop_dirs
     for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
-    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/{virt-manager,firefox}.*"
+    remove_legacy_desktop
+    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/firefox.*"
     ;;
   *)      usage ;;
 esac

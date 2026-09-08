@@ -1,6 +1,6 @@
 # Images for the qemu-kvm/libvirt/cockpit setup under systemd (AlmaLinux 10 minimal). One multi-stage file, two targets:
 #   kvm  (podman build --target kvm)  libvirt + qemu-kvm + cockpit: the server. Runs --privileged --network host as container "kvm"
-#   gui  (podman build --target gui)  firefox / virt-manager / virt-viewer: the desktop client shown on the host session (WSLg /
+#   gui  (podman build --target gui)  firefox / virt-viewer: the desktop client shown on the host session (WSLg /
 #                                     GNOME Wayland). Runs unprivileged as container "kvm-gui", only on hosts with a display
 # Both reach libvirt through /run/libvirt, a host directory kvm.sh shares between the containers (see the libvirt group below).
 # The minimal base ships microdnf instead of dnf (--setopt=install_weak_deps takes 0/1, not False/True)
@@ -129,11 +129,10 @@ RUN chmod +x \
 
 EXPOSE 9091
 
-# ---- gui: firefox / virt-manager / virt-viewer on the host display --------------------------------------------------
+# ---- gui: firefox / virt-viewer on the host display -----------------------------------------------------------------
 FROM common AS gui
 
-RUN microdnf -y install --setopt=install_weak_deps=0 epel-release \
-    && microdnf -y install --setopt=install_weak_deps=0 \
+RUN microdnf -y install --setopt=install_weak_deps=0 \
         # browser (pulls in mesa)
         firefox \
         # virt tools; libvirt-client for virsh (diagnostics through the shared socket). No libvirt daemons in this image
@@ -146,9 +145,6 @@ RUN microdnf -y install --setopt=install_weak_deps=0 epel-release \
         google-noto-sans-cjk-vf-fonts \
         # tar for install-desktop icon extraction; not in the minimal base and not pulled by anything
         tar \
-    # virt-manager is not in the default RHEL 10 repositories; it comes from CRB, which epel-release enables
-    # (skip it if unavailable)
-    && (microdnf -y install --setopt=install_weak_deps=0 virt-manager || echo "virt-manager is not available, skipping") \
     && microdnf clean all && rm -rf /var/cache/dnf \
     # GPU access for the GUI user (/dev/dri comes in with --device; the render nodes are also made 0666 by gui).
     # gui-user-setup puts the user it creates into these groups, so they only have to exist here
