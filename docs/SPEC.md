@@ -229,7 +229,7 @@ flowchart TB
   end
   subgraph L3 ["層 3: コンテナ内 (container/、ロールごとのディレクトリ)"]
     c1["common/gui-user-setup → /usr/local/bin/gui-user-setup<br/>common/gui-user.service → /etc/systemd/system/"]
-    k1["kvm/kvm-perms.service、kvm-net-teardown.service、kvm-libvirt-conf.service → /etc/systemd/system/<br/>kvm/libvirt-conf → /usr/local/bin/libvirt-conf<br/>kvm/virtd-socket.conf → /usr/local/share/kvm-container/ → virt*d.socket.d/kvm-container.conf"]
+    k1["kvm/kvm-perms.service、kvm-net-teardown.service、kvm-libvirt-conf.service → /etc/systemd/system/<br/>kvm/libvirt-conf → /usr/local/bin/libvirt-conf<br/>kvm/virtd-socket.conf → /usr/local/share/kvm-container/ → virt*d.socket.d/kvm-container.conf<br/>kvm/libvirt-guests → /etc/sysconfig/libvirt-guests"]
     g1["gui/gui → /usr/local/bin/gui<br/>(加えて tmpfiles.d/x11.conf → /dev/null)"]
   end
   kvmsh -->|"build kvm / gui"| L2
@@ -253,7 +253,8 @@ flowchart TB
 | `container/kvm/kvm-perms.service` | コンテナ | kvm | `/dev/kvm` `/dev/net/tun` の権限と `ip_forward` | 起動時 (sysinit、virtqemud より前) |
 | `container/kvm/kvm-libvirt-conf.service` + `libvirt-conf` | コンテナ | kvm | `/etc/libvirt` (= `data/etc-libvirt`) に `auth_unix_rw` と qemu.conf の設定を冪等に適用 | 起動時 (sysinit、virt*d の .socket より前) |
 | `container/kvm/virtd-socket.conf` | コンテナ | kvm | `virt{qemu,network,storage,nodedev,secret}d.socket` の drop-in (`SocketMode=0660` `SocketGroup=libvirt`) | ビルド時に配置、socket 起動時に効く |
-| `container/kvm/kvm-net-teardown.service` | コンテナ | kvm | 停止時に libvirt ネットワークを `net-destroy` | 停止時 (`ExecStop`) |
+| `container/kvm/kvm-net-teardown.service` | コンテナ | kvm | 停止時に libvirt ネットワークを `net-destroy` | 停止時 (`ExecStop`、`libvirt-guests` より後) |
+| `container/kvm/libvirt-guests` | コンテナ | kvm | `libvirt-guests.service` の設定。停止時に動いている VM を ACPI シャットダウン (最大 120 秒) | 停止時 (`ExecStop`、VM の machine scope より前) |
 | `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh viewer` / `launch` から `podman exec` |
 
 ### 3.3 コンテナ実行仕様 (`podman run`)
@@ -296,7 +297,7 @@ flowchart TB
 | --- | --- | --- |
 | `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`shadow-utils` (minimal には無い) を先に入れ、`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。続けて `systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
 | `common` | `base` | `gui-user.service` / `gui-user-setup` を配置して enable (一般ユーザーはイメージに焼き込まず、起動時に作る)。`systemd-logind.service` を unmask |
-| `kvm` | `common` | `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install`。`container/kvm/*` を配置し、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6) |
+| `kvm` | `common` | `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install`。`container/kvm/*` を配置し (`libvirt-guests` は `/etc/sysconfig/libvirt-guests` へ)、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6) |
 | `gui` | `common` | `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
 
 パッケージ方針は「依存で入らないものだけを、それが来るステージに列挙する」。`microdnf --setopt=install_weak_deps=0` (`False/True` は不可)。
@@ -347,7 +348,7 @@ flowchart LR
     u1["unmask: systemd-logind.service<br/>ベースイメージがマスク済み。GUI ユーザーの user@UID と<br/>/run/user/UID の session bus に必要"]
   end
   subgraph kvm ["kvm 段: systemctl enable"]
-    e1["kvm-perms.service / kvm-libvirt-conf.service / kvm-net-teardown.service"]
+    e1["kvm-perms.service / kvm-libvirt-conf.service / kvm-net-teardown.service<br/>libvirt-guests.service (停止時に VM を ACPI シャットダウン)"]
     e2["virtqemud / virtnetworkd / virtstoraged / virtnodedevd / virtsecretd / virtlogd の .socket<br/>(virtlogd 以外は drop-in で SocketMode=0660 SocketGroup=libvirt)"]
   end
   subgraph gui ["gui 段"]
@@ -405,7 +406,7 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | `build [kvm\|gui] [podman build 引数]` | ロール省略で両方 | | ロールごとに `podman build --target <role> -t localhost/kvm-container/<role>:latest -f Containerfile "$@" .` (`>> building ... (Containerfile target <role>)`) | podman の終了コード |
 | `up [kvm\|gui]` | 追加引数があれば usage で 1 | 2 章の要件 | 省略: `start_kvm` → `have_display` なら `start_gui`、無ければ `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)`。`kvm`: `start_kvm` のみ。`gui`: `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed` で 1、あれば `start_gui` のみ (5.1 節) | `kvm` の readiness が 30 秒で確認できなければ `!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell` で 1 |
-| `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` → `kvm` の順に `podman rm -f -i -t 10`、さらに `sudo rm -rf /run/kvm-container`。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman の終了コード |
+| `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` を `podman rm -f -i -t 10`、`kvm` を `podman rm -f -i -t 180` (`KVM_STOP_TIMEOUT`。動いている VM があれば先に `>> shutting down the running VMs (up to 120 s)...`)、さらに `sudo rm -rf /run/kvm-container`。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman の終了コード |
 | `clean` | 無し | | `kvm.sh down` (両方) → `data/` が無ければ `>> ... does not exist` で 0 → 削除対象と `du -sh` を表示 → `KVM_CLEAN_YES=1` でなければ `This deletes the VM disks and definitions as well. Continue? [y/N]` を尋ね、`y`/`Y` 以外は `>> aborted` で 1 → `sudo rm -rf data/` | 上記 |
 | `viewer [VM名]` | VM 名 (省略可)、以降は virt-viewer の引数 | ディスプレイ | `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): virt-viewer needs a desktop session; manage the VMs with ./kvm.sh virsh` で 2。`kvm.sh up` (足りないものを起動し、再ログイン後は `kvm-gui` を作り直す) → `podman exec kvm-gui gui virt-viewer "$@"` (VM 名なしなら選択ダイアログ、5.3 節) | `gui` の終了コード |
 | `virt-install ...` | virt-install の引数 | `kvm` 起動中 | `podman exec -it kvm virt-install --connect qemu:///system "$@"` | virt-install の終了コード |
@@ -764,7 +765,11 @@ flowchart LR
     klogind -->|"linger を読む"| kuserat["user@UID.service → /run/user/UID (tmpfs) + session bus"]
     subgraph kmu ["multi-user.target"]
       td["kvm-net-teardown.service<br/>After=virtnetworkd / virtqemud の .service と .socket<br/>Wants=virtnetworkd.socket"]
+      lg["libvirt-guests.service<br/>After=virt-guest-shutdown.target (パッケージ)"]
     end
+    scope["machine-qemu-*.scope (VM ごと)<br/>Before=virt-guest-shutdown.target"]
+    td -->|"Before="| lg
+    scope -->|"Before= (target 経由)"| lg
     vq --> td
     allsock --> td
   end
@@ -776,7 +781,8 @@ flowchart LR
 
 図 16: コンテナ内 unit の順序関係 (`Before=` / `After=` / `WantedBy=` から)。`gui-user.service` が logind より前なのは、
 logind が `/var/lib/systemd/linger` を起動時にしか読まないため。`kvm-libvirt-conf` が全 `.socket` より前なのは、デーモンが設定を読む前に
-`/etc/libvirt` を整えるため。`kvm-net-teardown` が virt*d の後なのは停止時に先に止まるため。`gui-user.service` の `Before=virtqemud.socket`
+`/etc/libvirt` を整えるため。`kvm-net-teardown` が virt*d の後なのは停止時に先に止まるため。`libvirt-guests` が teardown と VM の scope の後なのも同じで、
+停止時は VM のシャットダウン → ネットワークの削除 → デーモンの停止の順になる。`gui-user.service` の `Before=virtqemud.socket`
 は `kvm-gui` には該当 unit が無いので無視される。
 
 起動後のメッセージ:
@@ -797,21 +803,28 @@ sequenceDiagram
   participant P as podman
   participant G as kvm-gui
   participant S as kvm: systemd (PID 1)
+  participant L as libvirt-guests (ExecStop)
   participant T as kvm-net-teardown (ExecStop)
   participant V as virtnetworkd / virtqemud
   participant H as ホスト
   U->>K: ./kvm.sh down (引数なし = 両方)
   K->>P: podman rm -f -i -t 10 kvm-gui
   P->>G: SIGRTMIN+3 → 停止・削除 (GUI アプリも終了)
-  K->>P: podman rm -f -i -t 10 kvm
+  opt kvm で VM が動いている (virsh list --name が空でない)
+    K->>U: >> shutting down the running VMs (up to 120 s)...
+  end
+  K->>P: podman rm -f -i -t 180 kvm (KVM_STOP_TIMEOUT)
   P->>S: SIGRTMIN+3 (STOPSIGNAL)
-  S->>T: stop (After= の逆順なので virt*d より先に止まる)
+  S->>L: stop (VM の machine scope と kvm-net-teardown より先)
+  L->>V: 動いている VM を一斉に virsh shutdown (ACPI、PARALLEL_SHUTDOWN=10)
+  Note over L: SHUTDOWN_TIMEOUT=120 秒待っても止まらない VM は、この後 scope の停止で qemu ごと終了 (電源断と同じ)
+  S->>T: stop (After= の逆順なので virt*d より先、Before=libvirt-guests.service なので libvirt-guests より後)
   T->>V: virsh net-list --name で得た各ネットワークを net-destroy
   V->>H: virbr0 / dnsmasq / nftables ルールを削除
   T->>H: それでも残った /sys/class/net/virbr* を ip link del (フォールバック)
   Note over T: TimeoutStopSec=15
   S->>V: virt*d などを停止
-  P-->>K: コンテナ削除 (10 秒以内に止まらなければ SIGKILL)
+  P-->>K: コンテナ削除 (180 秒以内に止まらなければ SIGKILL)
   K->>H: sudo rm -rf /run/kvm-container
   Note over H: data/ (VM 定義・ディスク・home) は残る。down kvm / down gui は片方だけ止め、/run/kvm-container は残す
 ```
@@ -819,6 +832,11 @@ sequenceDiagram
 図 17: 停止シーケンス。`virbr0` はホストの名前空間にあるため、コンテナが消えても自動では消えない。libvirt のデーモンが
 生きているうちに `net-destroy` し、idle-exit していて socket activation が拒否される場合に備えて `ip link del` も行う。
 `kvm-gui` を先に止めるのは、`kvm` の libvirt に接続しているクライアントを先に閉じるため。
+`libvirt-guests.service` が無いと、コンテナの systemd は qemu の machine scope をすぐに止めるので、VM はゲスト OS のシャットダウンを経ずに
+電源断と同じ状態で終わる (次の起動で XFS のジャーナル復旧が走る。9.5 節で確認)。順序は libvirt 側の設定で決まる:
+machine scope は `Before=virt-guest-shutdown.target`、`libvirt-guests.service` は `After=virt-guest-shutdown.target` なので、
+停止時は `libvirt-guests` → scope の順になる。`down` の時点で動いていた VM は、`ON_BOOT=ignore` なので次の `up` では起動しない
+(起動するのは `virsh autostart` を設定した VM だけ。`libvirt-guests` を有効にする前と同じ)。
 
 ### 5.3 GUI 起動シーケンス (`container/gui/gui`、`kvm-gui` 内)
 
@@ -887,7 +905,8 @@ linger は `loginctl enable-linger` と同じ効果を logind 起動前に得る
 | `kvm-perms.service` | kvm | oneshot, RemainAfterExit | `DefaultDependencies=no`、`Before=virtqemud.socket virtqemud.service libvirtd.service`、`WantedBy=sysinit.target` | `chmod 0666 /dev/kvm /dev/net/tun`、`chown root:kvm /dev/kvm`、`sysctl -qw net.ipv4.ip_forward=1`。すべて失敗を無視 (`\|\| true`)。`/dev/dri` は扱わない (`kvm-gui` の `gui` が行う) |
 | `kvm-libvirt-conf.service` | kvm | oneshot, RemainAfterExit | `DefaultDependencies=no`、`After=local-fs.target`、`Before=` 6 つの `virt*d.socket`、`WantedBy=sysinit.target` | `ExecStart=/usr/local/bin/libvirt-conf` (3.5 節) |
 | `virtd-socket.conf` | kvm | drop-in (`virt{qemu,network,storage,nodedev,secret}d.socket.d/kvm-container.conf`) | | `[Socket]` `SocketMode=0660` `SocketGroup=libvirt` |
-| `kvm-net-teardown.service` | kvm | oneshot, RemainAfterExit | `After=virtnetworkd.service virtqemud.service virtnetworkd.socket virtqemud.socket`、`Wants=virtnetworkd.socket`、`WantedBy=multi-user.target`、`TimeoutStopSec=15` | `ExecStart=/bin/true`、`ExecStop` で全ネットワークの `net-destroy` と `virbr*` の `ip link del` (5.2 節) |
+| `kvm-net-teardown.service` | kvm | oneshot, RemainAfterExit | `After=virtnetworkd.service virtqemud.service virtnetworkd.socket virtqemud.socket`、`Before=libvirt-guests.service`、`Wants=virtnetworkd.socket`、`WantedBy=multi-user.target`、`TimeoutStopSec=15` | `ExecStart=/bin/true`、`ExecStop` で全ネットワークの `net-destroy` と `virbr*` の `ip link del` (5.2 節) |
+| `libvirt-guests.service` (パッケージの unit) + `/etc/sysconfig/libvirt-guests` | kvm | oneshot, RemainAfterExit, `TimeoutStopSec=0` | `After=virt-guest-shutdown.target virtqemud.socket ...` (パッケージ)、`WantedBy=multi-user.target` | `URIS=qemu:///system`、`ON_BOOT=ignore` (起動時は何もしない)、`ON_SHUTDOWN=shutdown` (既定の `suspend` = managed save ではなく ACPI シャットダウン)、`PARALLEL_SHUTDOWN=10`、`SHUTDOWN_TIMEOUT=120` (全体の上限)。`kvm.sh` の `KVM_STOP_TIMEOUT=180` はこれより長くする (5.2 節) |
 | `systemd-logind.service` | 両方 | (unmask) | | GUI ユーザーの `user@UID` (コンテナの `/run/user/UID` と session bus) を起動するために必要 (ベースイメージはマスク済み) |
 | `tmpfiles.d/x11.conf` | gui | マスク (`/dev/null` への symlink) | | ro マウントしたホストの `/tmp/.X11-unix` を systemd-tmpfiles に触らせない |
 
@@ -942,6 +961,7 @@ flowchart LR
     b12["/etc/libvirt の設定を Containerfile の sed で行う"]
     b13["/run/kvm-container/libvirt を空にせずに kvm を起動する、またはディレクトリごと消す"]
     b14["kvm-gui のセッション判定を省いて再利用する"]
+    b15["libvirt-guests.service 無しで、または down の待ち時間を SHUTDOWN_TIMEOUT 以下にして kvm を止める"]
   end
   subgraph result ["起きること"]
     r1["コンテナの logind がホストの bus / systemd --user を作り直し、user@ の停止時に user-runtime-dir@ がホストの Wayland ソケットごと削除 (PR 10。当時は cockpit のログイン/ログアウトで発生)"]
@@ -957,6 +977,7 @@ flowchart LR
     r12["data/etc-libvirt は空のときしか seed されないので、既存の data/ に設定が届かない (PR 18)"]
     r13["前回のソケット・pid・VM 状態が残ってデーモンが混乱する。ディレクトリを消すと起動中の kvm-gui が古い inode を見続ける (PR 18)"]
     r14["再ログイン後に古い (消えた) Wayland ソケットへ繋ぎ続け、画面に出ない (PR 18)"]
+    r15["動いている VM が電源断と同じ状態で止まり、次の起動でファイルシステムのジャーナル復旧が走る (9.5 節)"]
   end
   b1 --> r1
   b2 --> r2
@@ -971,6 +992,7 @@ flowchart LR
   b12 --> r12
   b13 --> r13
   b14 --> r14
+  b15 --> r15
 ```
 
 図 21: 禁止構成とその帰結。左の構成にすると右の不具合が再発する。
@@ -985,6 +1007,7 @@ flowchart LR
 | `kvm-gui` は `--privileged` ではないが `--security-opt label=disable` | `kvm.sh` `start_gui` | SELinux Enforcing のホストで特権コンテナ (spc_t) のソケットへ connect し、ホストの runtime dir (user_tmp_t) を読むため。`/dev/dri` は `--device` で渡し、`gui` が `renderD*` を 0666 にする |
 | 再ログイン後は `kvm-gui` だけ作り直す | `kvm.sh` `start_gui` / `gui_session_matches` | `GUI_ARGS` のハッシュをラベル `kvm.gui-session` に記録し、ラベルとコンテナ内のソケット実在の両方で判定する。`viewer` は必ず `up` を経由する |
 | `--network host` の帰結を守る (両コンテナ): `iscsid.socket` / `iscsiuio.socket` / `NetworkManager.service` / `NetworkManager-wait-online.service` のマスク、停止時の `kvm-net-teardown` | `Containerfile` `base`、`kvm-net-teardown.service` | NetworkManager は今の依存では入らないが、マスクは残す。ホストのポートで listen するものは無い |
+| `kvm` の停止では VM を先にシャットダウンする: `libvirt-guests.service` を有効にし、`kvm-net-teardown.service` はその後に止め (`Before=libvirt-guests.service`)、`down` は `SHUTDOWN_TIMEOUT` より長く待つ | `Containerfile` `kvm`、`container/kvm/libvirt-guests`、`kvm-net-teardown.service`、`kvm.sh` `KVM_STOP_TIMEOUT` | 起動時は何もしない (`ON_BOOT=ignore`)。qemu.conf の `auto_shutdown_*` は libvirt-guests と二重に動かないよう既定 (`none`) のまま |
 | GUI ユーザーはホストユーザーの写し (名前・uid/gid)。`kvm.sh` は root で実行させない | `host_user_args`、`gui-user-setup` | ホストの runtime dir は 0700 なので uid 一致が必要。パスワードは設定しない |
 | `data/` は空のときだけ `kvm` イメージから seed し、seed コンテナは `--security-opt label=disable` | `prepare_data_dir` | バインドマウントはイメージの内容をコピーしないため |
 | `systemd-logind` はマスク解除する (`common` 段) | `Containerfile` | ベースイメージはマスク済み。GUI ユーザーの `user@UID` と session bus に必要 |
@@ -1016,6 +1039,11 @@ flowchart LR
 | `kvm-gui` の `/run/user/UID` | 非特権なので tmpfs にならず `/run` 直下の通常のディレクトリ (systemd のフォールバック、想定内) |
 | WSLg のスタートメニュー | `~/.local/share/applications` の `.desktop` は Windows のスタートメニューに反映されるはずだが未検証 |
 | 1 コンテナ構成からの移行 | 旧構成の `kvm` コンテナは `/run/libvirt` を共有していないので、`./kvm.sh down` で消してから `./kvm.sh build && ./kvm.sh up` する。旧イメージ `localhost/qemu-kvm-cockpit` は `sudo podman rmi` で消せる。`data/` はそのまま使える (`kvm-libvirt-conf.service` が設定を更新する) |
+| ホストの停止 | VM はコンテナ内の qemu。ホストの再起動・シャットダウンではコンテナごと止められ、`libvirt-guests` の 120 秒が確保される保証は無いので、先に `./kvm.sh down` する |
+| ACPI に応じない VM | OS の無い VM や ACPI の電源ボタンを無視する OS は、`down` で 120 秒待ったあと電源断と同じ状態で止まる |
+| VM の削除 | UEFI の VM は `virsh undefine` に `--nvram` が要る (無いと `Cannot undefine domain with NVRAM/varstore`)。`--remove-all-storage` は CD-ROM に入ったままの ISO も削除するので、`--storage <target>` で消すディスクを指定するか、先に `change-media --eject --config` する |
+| `virt-install --initrd-inject` | `kvm` イメージに `cpio` が無いので `No such file or directory: 'cpio'` で失敗する。キックスタートは `OEMDRV` ラベルの ISO (`xorriso` はある) で渡す (9.5 節) |
+| `virt-install` の既定ネットワーク | `--network` を省くと、virt-install はホストの既定経路のデバイスがブリッジ (またはブリッジのポート) ならそのブリッジを選ぶ。`--network host` なのでホストのブリッジが見え、`default` (NAT) にならないことがある |
 | 起動確認のタイムアウト | `kvm` の readiness は 30 秒固定。遅いホストでは `could not confirm startup` になり得る (コンテナ自体は起動を続ける)。`kvm-gui` には readiness 待ちが無い |
 
 ```mermaid
@@ -1096,10 +1124,37 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | 変更箇所 | 確認 |
 | --- | --- |
 | `KVM_BRIDGE` 周り | `./kvm.sh virsh net-list` で `bridged` が active。`KVM_BRIDGE` 無しで `up` すると消える |
-| `down` | ホストに `virbr0` と dnsmasq と `/run/kvm-container` が残らない。`down` → `up` で VM 定義とディスクが復元される |
+| `down` | ホストに `virbr0` と dnsmasq と `/run/kvm-container` が残らない。`down` → `up` で VM 定義とディスクが復元される。動いている VM はシャットダウンされる (9.5 節) |
 | `install-desktop` / `launch` | Activities の「Virt Viewer」から VM 選択ダイアログが開く。`kvm-gui` 未起動時と sudo 失敗時に通知が出る |
 | GUI ユーザー | 両コンテナの `/etc/shadow` でユーザーがロックされている。コンテナには他に一般ユーザーが居ない |
 | ロール引数 | `up kvm` は `kvm-gui` を起動しない。ディスプレイ無しで `up gui` は exit 1。`build gui` は `gui` イメージだけを作る |
+
+### 9.5 VM のライフサイクル
+
+OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは README の「VM のライフサイクルの確認手順」)。
+キックスタート (`poweroff`、`%packages` に `qemu-guest-agent`) を `OEMDRV` ラベルの ISO にして `--location <boot ISO>` でインストールすると、
+インストール後に `shut off` になり、永続定義はディスク起動に切り替わる (kernel/initrd の直接起動と boot ISO は外れる)。
+起動の確認は `virsh qemu-agent-command lctest '{"execute":"guest-ping"}'`、再起動の確認はシリアルログ
+(`--serial pty,log.file=/var/log/libvirt/qemu/lctest-serial.log`、`kvm` のコンテナ内で非永続) の `Linux version` の行数で行う。
+
+| 操作 | 期待結果 | 検証していること |
+| --- | --- | --- |
+| `virt-install ... --location ... --noautoconsole` | 数分で `shut off`。`domblklist` に `vda` (qcow2)、`vncdisplay` が `127.0.0.1:0` | `virt-install` パススルー、ゲストのネットワーク (インストーラがリポジトリに届く) |
+| `virsh start` → guest agent | 10 秒前後で `guest-ping` が応答、`domifaddr --source agent` で IP が取れる | ディスクからの起動、guest agent のチャネル (`/run/libvirt/qemu/channel`) |
+| `viewer lctest` | ログインプロンプトが見える | 共有ソケット経由の VNC |
+| `virsh reboot` | シリアルログの `Linux version` が 1 行増え、guest agent が戻る。viewer は開いたまま | ACPI 再起動 |
+| `virsh shutdown` (`--mode acpi` / `--mode agent`) | 数秒で `shut off (shutdown)`。viewer は自動で閉じる | ACPI と guest agent による停止 |
+| `virsh suspend` → `resume` | `paused (user)` → `running (unpaused)` | |
+| `virsh destroy` | `shut off (destroyed)` | 強制停止 |
+| 停止中に `setvcpus ... --config` / `setmem ... --config` → `start` | 変更後の値で起動する (`guest-get-vcpus`) | `data/etc-libvirt/qemu/<VM>.xml` への永続化 |
+| `snapshot-create-as` → `snapshot-revert` → `snapshot-delete` | すべて成功し、`running (from snapshot)` になる | qcow2 の内部スナップショット |
+| VM 稼働中に `down kvm` | `>> shutting down the running VMs` が出て数秒で終わる。次の起動のシリアルログに `XFS (...): Starting recovery` が出ない | `libvirt-guests.service` による停止 (5.2 節)。無効だと 1 秒で終わり、復旧が走る |
+| ACPI に応じない VM (例 `--pxe --disk none`) を動かしたまま `down kvm` | 約 120 秒で終わり、ホストに qemu・`vnet*`・`virbr0` が残らない | `SHUTDOWN_TIMEOUT` と `KVM_STOP_TIMEOUT` の関係 |
+| `virsh autostart` → `down kvm` → `up kvm` | `running (booted)`。`data/etc-libvirt/qemu/autostart/` に symlink | 自動起動 |
+| autostart 無しの VM を動かしたまま `down kvm` → `up kvm` | 定義が残り `shut off` のまま | `ON_BOOT=ignore` |
+| UEFI の VM に `virsh undefine` (`--nvram` 無し) | `Cannot undefine domain with NVRAM/varstore` で失敗し、定義も残る | 8 章 |
+| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (README) |
+| CD-ROM に ISO を入れたまま `virsh undefine --remove-all-storage` | ISO も消える (使い捨ての ISO で確認する) | 8 章の注意が今も正しいか |
 
 ## 付録 A. ファイル一覧とコンテナ内配置
 
@@ -1115,6 +1170,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `container/kvm/kvm-net-teardown.service` | kvm | `/etc/systemd/system/kvm-net-teardown.service` | | `systemctl enable` |
 | `container/kvm/kvm-libvirt-conf.service` | kvm | `/etc/systemd/system/kvm-libvirt-conf.service` | | `systemctl enable` |
 | `container/kvm/libvirt-conf` | kvm | `/usr/local/bin/libvirt-conf` | `chmod +x` | |
+| `container/kvm/libvirt-guests` | kvm | `/etc/sysconfig/libvirt-guests` | | `libvirt-guests.service` を `systemctl enable` |
 | `container/kvm/virtd-socket.conf` | kvm | `/usr/local/share/kvm-container/virtd-socket.conf` → `/etc/systemd/system/virt{qemu,network,storage,nodedev,secret}d.socket.d/kvm-container.conf` | 0644 (`install -D`) | |
 | `container/gui/gui` | gui | `/usr/local/bin/gui` | `chmod +x` | |
 | `.gitignore` | | | | `*.iso` `*.qcow2` `build.log` `data/` |

@@ -1,0 +1,16 @@
+# /etc/sysconfig/libvirt-guests for the kvm container (installed by the Containerfile, read by libvirt-guests.service).
+# Without libvirt-guests, stopping the container (kvm.sh down) kills the qemu processes: the guests lose power without
+# shutting down, and their file systems need journal recovery on the next boot. With it, systemd stops
+# libvirt-guests.service before the VMs' machine scopes (libvirt orders the scopes Before=virt-guest-shutdown.target and
+# libvirt-guests.service After= it) and before kvm-net-teardown.service (Before=libvirt-guests.service there).
+# kvm.sh down waits longer than SHUTDOWN_TIMEOUT before podman kills the container (KVM_STOP_TIMEOUT in kvm.sh)
+URIS=qemu:///system
+# the packaged default is "start", which restarts at the next "up" every guest that was running at "down".
+# Leave that to each VM's autostart flag (virsh autostart), as before libvirt-guests was enabled
+ON_BOOT=ignore
+# the packaged default is "suspend" (managed save to /var/lib/libvirt/qemu/save): shut the guests down (ACPI) instead
+ON_SHUTDOWN=shutdown
+# shut all guests down at once so that SHUTDOWN_TIMEOUT bounds the whole stop, not each guest in turn. A guest still
+# running after SHUTDOWN_TIMEOUT seconds (no OS, or one that ignores the ACPI power button) is killed with the container
+PARALLEL_SHUTDOWN=10
+SHUTDOWN_TIMEOUT=120

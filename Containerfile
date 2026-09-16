@@ -91,6 +91,8 @@ COPY container/kvm/kvm-net-teardown.service /etc/systemd/system/
 COPY container/kvm/kvm-libvirt-conf.service /etc/systemd/system/
 COPY container/kvm/libvirt-conf /usr/local/bin/libvirt-conf
 COPY container/kvm/virtd-socket.conf /usr/local/share/kvm-container/virtd-socket.conf
+# shut the running VMs down when the container stops (see the file); /etc/sysconfig is part of the image, not of data/
+COPY container/kvm/libvirt-guests /etc/sysconfig/libvirt-guests
 RUN chmod +x /usr/local/bin/libvirt-conf \
     # socket permissions of the client-facing libvirt daemons (root:libvirt 0660 instead of 0666 + polkit)
     && for d in virtqemud virtnetworkd virtstoraged virtnodedevd virtsecretd; do \
@@ -100,6 +102,7 @@ RUN chmod +x /usr/local/bin/libvirt-conf \
         kvm-perms.service \
         kvm-net-teardown.service \
         kvm-libvirt-conf.service \
+        libvirt-guests.service \
         virtqemud.socket \
         virtnetworkd.socket \
         virtstoraged.socket \
