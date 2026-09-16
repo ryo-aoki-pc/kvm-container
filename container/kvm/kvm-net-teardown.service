@@ -5,6 +5,8 @@ Description=Destroy libvirt networks at shutdown (they live in the host network 
 # networks down through libvirt while its daemons are still running: this unit is stopped before them (reverse of After=).
 # If a daemon has already idle-exited, socket activation is refused during shutdown, hence the ip link fallback
 After=virtnetworkd.service virtqemud.service virtnetworkd.socket virtqemud.socket
+# stopped after libvirt-guests.service, which shuts the running VMs down while their networks still exist
+Before=libvirt-guests.service
 Wants=virtnetworkd.socket
 
 [Service]

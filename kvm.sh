@@ -6,7 +6,8 @@
 #   ./kvm.sh build [kvm|gui]  build the images (both by default; extra arguments go to podman build)
 #   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). After a host re-login,
 #                             up recreates kvm-gui only (VMs keep running)
-#   ./kvm.sh down [kvm|gui]   stop and remove the containers (VM data stays in data/ under the repository)
+#   ./kvm.sh down [kvm|gui]   stop and remove the containers (VM data stays in data/ under the repository). Running VMs
+#                             are shut down (ACPI) first; one still running after 120 s is powered off
 #   ./kvm.sh virt-install ... create a VM (virt-install inside the kvm container; put ISOs under data/var-libvirt/images)
 #   ./kvm.sh virsh ...        run virsh inside the kvm container (list / start / shutdown / destroy / undefine ...)
 #   ./kvm.sh viewer [VM]      show a VM's screen with virt-viewer on the host display (no VM: choose one from a list)
@@ -39,6 +40,8 @@ HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libvirt / home), inside the repository
 KVM_RUN_DIR=/run/kvm-container         # host directory shared by the containers: libvirt/ is /run/libvirt in both (on tmpfs, wiped by up/down)
+KVM_STOP_TIMEOUT=180                   # seconds down gives the kvm container before podman kills it: running VMs are shut down
+                                       # by libvirt-guests.service, which gives up after SHUTDOWN_TIMEOUT=120 (container/kvm/libvirt-guests)
 HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the GUI container
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-viewer"             # apps that get a .desktop entry (subcommand names of container/gui/gui)
@@ -349,7 +352,12 @@ case "$cmd" in
   down)
     [ $# -eq 0 ] || { usage >&2; exit 1; }
     case "$role" in ""|gui) $PODMAN rm -f -i -t 10 "$GUI_CONTAINER" ;; esac
-    case "$role" in ""|kvm) $PODMAN rm -f -i -t 10 "$KVM_CONTAINER" ;; esac
+    case "$role" in ""|kvm)
+      if running "$KVM_CONTAINER" && [ -n "$(virsh_in list --name 2>/dev/null)" ]; then
+        echo ">> shutting down the running VMs (up to 120 s)..."
+      fi
+      $PODMAN rm -f -i -t "$KVM_STOP_TIMEOUT" "$KVM_CONTAINER" ;;
+    esac
     [ -n "$role" ] || sudo rm -rf "$KVM_RUN_DIR"
     ;;
   clean)  "$0" down

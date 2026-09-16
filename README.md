@@ -97,14 +97,23 @@ sudo cp AlmaLinux-10-latest-x86_64-dvd.iso data/var-libvirt/images/
 ./kvm.sh virsh list --all
 ./kvm.sh virsh shutdown alma10  # ACPI で停止 (destroy は強制停止)
 ./kvm.sh virsh start alma10
-./kvm.sh virsh undefine alma10 --remove-all-storage   # 定義とディスクを削除
+./kvm.sh virsh autostart alma10 # up で自動起動する (解除は --disable)
+./kvm.sh virsh domblklist alma10                        # 削除の前に: ディスクのターゲット名 (vda など) と CD-ROM の中身を確認
+./kvm.sh virsh undefine alma10 --nvram --storage vda    # 定義・UEFI 変数・ディスクを削除 (ISO は残る)
 ```
 
 - ディスクは `--disk size=20` で `/var/lib/libvirt/images/<VM名>.qcow2` (= `data/var-libvirt/images/`) に作られます
 - `--graphics vnc` は RHEL 10 系の qemu-kvm に SPICE が無いため。VNC は `kvm` がホストの loopback で listen し、`kvm-gui` の virt-viewer が libvirt 経由で接続します
 - `--noautoconsole` は `kvm` コンテナに virt-viewer が無いため (画面は `./kvm.sh viewer` で開きます)
 - `--osinfo` に OS 名を渡す場合の候補は `./kvm.sh virt-install --osinfo list` で確認できます
-- ネットワークは既定で `default` (NAT、192.168.122.0/24)。ホストのブリッジに直結するなら `--network network=bridged` (後述「ブリッジ」)
+- `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぎます
+  (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見えます)。明示するなら `--network network=default` や `--network network=bridged` (後述「ブリッジ」)
+- 削除 (`undefine`) の注意:
+  - UEFI の VM (`<os firmware='efi'>`) は `--nvram` が無いと `Cannot undefine domain with NVRAM/varstore` で失敗します。BIOS の VM に付けても害はありません
+  - `--remove-all-storage` は CD-ROM に入ったままの ISO も削除します。複数の VM で共有している ISO を消さないように、`--storage vda` のように消すディスクを指定するか、
+    先に `./kvm.sh virsh change-media <VM名> sda --eject --config` で取り出してください (`--cdrom` でインストールした VM はインストール後に取り出されていますが、後から入れた場合は残ります)
+- `./kvm.sh down` (と `clean`) は、動いている VM を先に ACPI でシャットダウンします (`libvirt-guests.service`)。120 秒たっても止まらない VM (OS が無い、ACPI を無視するなど) は電源を切られます。
+  `down` の時点で動いていた VM は次の `up` で起動しません。`up` で起動させたい VM には `virsh autostart` を設定してください
 
 ## 構成
 
@@ -147,6 +156,7 @@ sudo cp AlmaLinux-10-latest-x86_64-dvd.iso data/var-libvirt/images/
 | `container/kvm/kvm-libvirt-conf.service` + `libvirt-conf` | 起動時に `/etc/libvirt` へ上記の設定を冪等に適用する |
 | `container/kvm/virtd-socket.conf` | `virt{qemu,network,storage,nodedev,secret}d.socket` の drop-in (`SocketMode=0660` `SocketGroup=libvirt`) |
 | `container/kvm/kvm-net-teardown.service` | コンテナ停止時に libvirt のネットワークを `net-destroy` し、ホスト側に `virbr0` などを残さない |
+| `container/kvm/libvirt-guests` | `/etc/sysconfig/libvirt-guests`。コンテナ停止時に動いている VM を ACPI でシャットダウンする (`ON_SHUTDOWN=shutdown`、最大 120 秒)。起動時には何もしない (`ON_BOOT=ignore`) |
 | `container/gui/gui` | ホストユーザーと同じ名前のユーザーとして GUI アプリを起動 (Wayland 優先、X11 フォールバック)。コンテナ側の `/run/user/<uid>` と session bus を使い、`/dev/dri/renderD*` を開けるようにする |
 | `desktop/kvm-virt-viewer.desktop` | アクティビティ用ランチャーのテンプレート。`kvm.sh install-desktop` が `@KVM_SH@` を埋めて `~/.local/share/applications/` に配置 |
 
@@ -277,6 +287,9 @@ NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
 - GNOME からログアウト/再ログインしたり、ホスト側の `DISPLAY` 等を変えた場合は `./kvm.sh up` を実行してください。`kvm-gui` だけが作り直され、
   VM は動いたままです (`viewer` も同じことをしてから起動します)。
 - RHEL 10 系の qemu-kvm には SPICE がないため、グラフィックスは VNC を使っています。
+- VM はコンテナの中の qemu なので、ホストを再起動・シャットダウンする前に `./kvm.sh down` で VM を止めてください。
+  `down` は VM のシャットダウンを待ちますが、ホストの停止ではコンテナごと止められるため、VM が正常にシャットダウンできるとは限りません。
+  `down` が VM をシャットダウンしない版から更新する場合は、VM を止めてから `./kvm.sh down && ./kvm.sh build kvm && ./kvm.sh up` で `kvm` イメージを作り直してください。
 - `kvm.sh` は root ではなく一般ユーザーで実行してください (コンテナ内のユーザーをホストユーザーに合わせるためです)。
 - コンテナ名は `kvm` と `kvm-gui` に固定です (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は WSL がホスト名に使うため避けています)。
 - cockpit / firefox を使っていた版から更新する場合は、`./kvm.sh down && ./kvm.sh build && ./kvm.sh up` で両イメージを作り直してください。
@@ -306,6 +319,39 @@ sudo ausearch -m avc -ts recent                        # SELinux 拒否が無い
 # GNOME からログアウト → 再ログイン → 端末で:
 ./kvm.sh up                                            # kvm-gui だけが作り直され、./kvm.sh virsh list の VM が動いたままであること
 ./kvm.sh down; ip link show virbr0; ls /run/kvm-container   # どちらも残っていないこと
+```
+
+### VM のライフサイクルの確認手順
+
+OS の入った使い捨ての VM で、作成から削除までを確認します (手順の詳細と期待結果は `docs/SPEC.md` 9.5 節)。
+キックスタートは `data/` 以外の場所で書き、`OEMDRV` ラベルの ISO にして渡します (`virt-install --initrd-inject` は `kvm` イメージに `cpio` が無いので使えません)。
+`ks.cfg` には `poweroff` と、`%packages` に `qemu-guest-agent` を入れておきます。
+
+```bash
+./kvm.sh up
+sudo podman exec kvm mkdir -p /tmp/ksdir && sudo podman cp ks.cfg kvm:/tmp/ksdir/ks.cfg
+sudo podman exec kvm xorriso -as mkisofs -V OEMDRV -o /var/lib/libvirt/images/lctest-ks.iso /tmp/ksdir
+./kvm.sh virt-install --name lctest --memory 3072 --vcpus 2 --disk size=10 \
+  --location /var/lib/libvirt/images/AlmaLinux-10.2-x86_64-boot.iso --osinfo almalinux10 \
+  --disk path=/var/lib/libvirt/images/lctest-ks.iso,device=cdrom \
+  --extra-args "inst.ks=hd:LABEL=OEMDRV:/ks.cfg inst.text console=ttyS0,115200" \
+  --serial pty,log.file=/var/log/libvirt/qemu/lctest-serial.log --graphics vnc --noautoconsole
+./kvm.sh virsh domstate lctest                         # インストールが終わると shut off (poweroff)
+./kvm.sh virsh start lctest
+./kvm.sh virsh qemu-agent-command lctest '{"execute":"guest-ping"}'   # 応答すれば OS が起動している
+./kvm.sh virsh domifaddr lctest --source agent          # IP が取れていること
+./kvm.sh viewer lctest                                  # ログインプロンプトが見えること
+./kvm.sh virsh reboot lctest                            # 再起動して guest agent が戻ること
+./kvm.sh virsh shutdown lctest                          # 数秒で shut off (shutdown)。viewer のウィンドウは閉じる
+./kvm.sh virsh start lctest; ./kvm.sh virsh suspend lctest; ./kvm.sh virsh resume lctest   # paused (user) → running (unpaused)
+./kvm.sh virsh destroy lctest                           # shut off (destroyed)
+./kvm.sh virsh start lctest; ./kvm.sh down kvm          # ">> shutting down the running VMs" が出て、数秒で終わること
+./kvm.sh up kvm; ./kvm.sh virsh start lctest            # シリアルログに "XFS (...): Starting recovery" が出ないこと
+./kvm.sh virsh autostart lctest; ./kvm.sh down kvm; ./kvm.sh up kvm   # lctest が running (booted) になること
+./kvm.sh virsh autostart lctest --disable
+./kvm.sh down kvm; ./kvm.sh up kvm                      # 定義が残り、lctest は shut off のまま (down 時に動いていても起動しない)
+./kvm.sh virsh undefine lctest --nvram --storage vda    # 定義とディスクだけが消え、ISO が残ること
+sudo ls data/var-libvirt/images data/etc-libvirt/qemu
 ```
 
 ### Windows + WSL2 での確認手順
