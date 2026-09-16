@@ -1,7 +1,8 @@
-# Images for the qemu-kvm/libvirt/cockpit setup under systemd (AlmaLinux 10 minimal). One multi-stage file, two targets:
-#   kvm  (podman build --target kvm)  libvirt + qemu-kvm + cockpit: the server. Runs --privileged --network host as container "kvm"
-#   gui  (podman build --target gui)  firefox / virt-viewer: the desktop client shown on the host session (WSLg /
-#                                     GNOME Wayland). Runs unprivileged as container "kvm-gui", only on hosts with a display
+# Images for the qemu-kvm/libvirt setup under systemd (AlmaLinux 10 minimal). One multi-stage file, two targets:
+#   kvm  (podman build --target kvm)  libvirt + qemu-kvm + virt-install: the server. Runs --privileged --network host as
+#                                     container "kvm". The VMs are managed from the command line (kvm.sh virsh / virt-install)
+#   gui  (podman build --target gui)  virt-viewer: the desktop client shown on the host session (WSLg / GNOME Wayland).
+#                                     Runs unprivileged as container "kvm-gui", only on hosts with a display
 # Both reach libvirt through /run/libvirt, a host directory kvm.sh shares between the containers (see the libvirt group below).
 # The minimal base ships microdnf instead of dnf (--setopt=install_weak_deps takes 0/1, not False/True)
 
@@ -22,11 +23,10 @@ ARG LIBVIRT_GID=985
 RUN microdnf -y install --setopt=install_weak_deps=0 shadow-utils \
     && groupadd -r -g ${LIBVIRT_GID} libvirt \
     # systemd is not in the minimal base (the images run /sbin/init); dbus-daemon over the default dbus-broker;
-    # hostname for cockpit; both locales so that ja and en are present, not just glibc's default langpack
+    # both locales so that ja and en are present, not just glibc's default langpack
     && microdnf -y install --setopt=install_weak_deps=0 \
         systemd \
         dbus-daemon \
-        hostname \
         glibc-langpack-ja \
         glibc-langpack-en \
     && microdnf clean all && rm -rf /var/cache/dnf \
@@ -36,16 +36,17 @@ RUN microdnf -y install --setopt=install_weak_deps=0 shadow-utils \
         systemd-udevd-kernel.socket \
         systemd-udevd-control.socket \
         systemd-resolved.service \
-    # cockpit-issue.service wants network-online.target, which pulls in NetworkManager-wait-online. NetworkManager
-    # never reports podman's eth0 as "online", so the unit times out after 60 s: the boot stays "starting" for a minute
-    # (gui waits for it before launching the first app) and ends up "degraded" with a failed unit
+    # NetworkManager is not needed by these containers and is masked in case a dependency brings it in (cockpit used to):
+    # NetworkManager never reports podman's eth0 as "online", so anything wanting network-online.target waits 60 s for
+    # NetworkManager-wait-online and leaves the boot "degraded" with a failed unit (gui waits for the boot before
+    # launching the first app) ...
         NetworkManager-wait-online.service \
-    # the containers share the host's network namespace (--network host, so that VMs can be bridged onto the host's
-    # segment); NetworkManager would otherwise start managing the host's interfaces and bridges
+    # ... and the containers share the host's network namespace (--network host, so that VMs can be bridged onto the
+    # host's segment), where NetworkManager would start managing the host's interfaces and bridges
         NetworkManager.service \
-    # iscsi-initiator-utils comes in via cockpit-storaged / libvirt's iSCSI storage driver. Its sockets listen in the
-    # ABSTRACT unix namespace, which belongs to the network namespace: with --network host they collide with the host's
-    # iscsid ("Address already in use") and leave the boot "degraded". iSCSI is not used by these containers
+    # iscsi-initiator-utils comes in via libvirt's iSCSI storage driver. Its sockets listen in the ABSTRACT unix
+    # namespace, which belongs to the network namespace: with --network host they collide with the host's iscsid
+    # ("Address already in use") and leave the boot "degraded". iSCSI is not used by these containers
         iscsid.socket \
         iscsiuio.socket \
     && rm -f /etc/systemd/system/*.wants/systemd-remount-fs.service
@@ -56,61 +57,41 @@ CMD ["/sbin/init"]
 # ---- common: the mirrored host user (both images) -----------------------------------------------------------------
 FROM base AS common
 
-# The images ship no unprivileged user of their own: gui-user.service creates the GUI/cockpit user at boot from the host
-# user's name, uid/gid, groups and password hash (see container/common/gui-user-setup), so nothing about the host has to
-# be known at build time
+# The images ship no unprivileged user of their own: gui-user.service creates the GUI user at boot from the host user's
+# name, uid/gid and groups (see container/common/gui-user-setup), so nothing about the host has to be known at build time
 COPY container/common/gui-user.service /etc/systemd/system/
 COPY container/common/gui-user-setup /usr/local/bin/gui-user-setup
 RUN chmod +x /usr/local/bin/gui-user-setup \
     && systemctl enable gui-user.service \
-    # AlmaLinux's container base image masks systemd-logind, so unmask it explicitly.
-    # A cockpit login creates a logind session via pam_systemd, and pages such as "Services" open the user's
-    # session bus (/run/user/<uid>/bus). Without logind that bus cannot be reached, cockpit-bridge crashes
-    # and the user is logged out right after logging in.
-    # logind also owns the container's /run/user/<uid>: the GUI user lingers (gui-user-setup), so that directory and
-    # its session bus exist from boot and survive cockpit logouts. The host's runtime dir is never mounted there
+    # AlmaLinux's container base image masks systemd-logind, so unmask it explicitly: logind owns the container's
+    # /run/user/<uid> and starts the GUI user's systemd --user instance at boot (the user lingers, see gui-user-setup),
+    # which provides the session bus the GTK apps expect. The host's runtime dir is never mounted there
     # (kvm.sh mounts it read-only at /run/host-xdg-runtime), so logind cannot touch the host's sockets
     && systemctl unmask systemd-logind.service
 
-# ---- kvm: libvirt + qemu-kvm + cockpit -----------------------------------------------------------------------------
+# ---- kvm: libvirt + qemu-kvm + virt-install ------------------------------------------------------------------------
 FROM common AS kvm
 
 RUN microdnf -y install --setopt=install_weak_deps=0 \
     # Only packages that would not otherwise be pulled in as dependencies are listed. Their deps bring the rest:
-    # libvirt-daemon-kvm -> qemu-kvm/qemu-img/edk2-ovmf/swtpm/util-linux..., cockpit -> cockpit-ws/-bridge/-system,
-    # cockpit-machines -> libvirt-dbus/libvirt-client/qemu-kvm..., and polkit/sudo/iproute/curl/xz come in transitively.
-        # passwd for the cockpit password page; procps-ng for sysctl in kvm-perms.service (only a weak dep otherwise)
-        passwd \
+    # libvirt-daemon-kvm -> qemu-kvm/qemu-img/edk2-ovmf/swtpm/util-linux..., libvirt -> libvirt-client (virsh)/polkit/
+    # dnsmasq/iproute (ip in kvm-net-teardown.service)...
+        # procps-ng for sysctl in kvm-perms.service (only a weak dep otherwise)
         iputils \
         procps-ng \
         # libvirt + qemu
         libvirt \
         libvirt-daemon-kvm \
-        # virt-install (also a dep of cockpit-machines; listed so that "podman exec kvm virt-install" stays available)
+        # VM creation from the command line (kvm.sh virt-install)
         virt-install \
-        # cockpit (cockpit-ws/-bridge/-system arrive via the cockpit metapackage)
-        cockpit \
-        cockpit-machines \
-        cockpit-storaged \
-    && microdnf clean all && rm -rf /var/cache/dnf \
-    # passwordless sudo for wheel (cockpit's administrative access); by group, so it does not depend on the host user's name
-    && echo "%wheel ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel-nopasswd \
-    && chmod 0440 /etc/sudoers.d/wheel-nopasswd \
-    # cockpit-machines talks to libvirt through libvirt-dbus, which runs as "libvirtdbus". It is normally let in by a
-    # polkit rule, but the sockets use group permissions instead of polkit here (see the base stage and
-    # container/kvm/virtd-socket.conf), so the user needs the libvirt group
-    && usermod -aG libvirt libvirtdbus
+    && microdnf clean all && rm -rf /var/cache/dnf
 
 COPY container/kvm/kvm-perms.service /etc/systemd/system/
 COPY container/kvm/kvm-net-teardown.service /etc/systemd/system/
 COPY container/kvm/kvm-libvirt-conf.service /etc/systemd/system/
 COPY container/kvm/libvirt-conf /usr/local/bin/libvirt-conf
 COPY container/kvm/virtd-socket.conf /usr/local/share/kvm-container/virtd-socket.conf
-COPY container/kvm/cockpit.conf /etc/cockpit/cockpit.conf
-COPY container/kvm/cockpit-listen-generator /usr/lib/systemd/system-generators/cockpit-listen
-RUN chmod +x \
-        /usr/local/bin/libvirt-conf \
-        /usr/lib/systemd/system-generators/cockpit-listen \
+RUN chmod +x /usr/local/bin/libvirt-conf \
     # socket permissions of the client-facing libvirt daemons (root:libvirt 0660 instead of 0666 + polkit)
     && for d in virtqemud virtnetworkd virtstoraged virtnodedevd virtsecretd; do \
          install -D -m 0644 /usr/local/share/kvm-container/virtd-socket.conf "/etc/systemd/system/$d.socket.d/kvm-container.conf"; \
@@ -124,18 +105,14 @@ RUN chmod +x \
         virtstoraged.socket \
         virtnodedevd.socket \
         virtsecretd.socket \
-        virtlogd.socket \
-        cockpit.socket
+        virtlogd.socket
 
-EXPOSE 9091
-
-# ---- gui: firefox / virt-viewer on the host display -----------------------------------------------------------------
+# ---- gui: virt-viewer on the host display ---------------------------------------------------------------------------
 FROM common AS gui
 
 RUN microdnf -y install --setopt=install_weak_deps=0 \
-        # browser (pulls in mesa)
-        firefox \
-        # virt tools; libvirt-client for virsh (diagnostics through the shared socket). No libvirt daemons in this image
+        # the VM console (pulls in gtk3 / gtk-vnc); libvirt-client for virsh (diagnostics through the shared socket).
+        # No libvirt daemons in this image
         virt-viewer \
         libvirt-client \
         # runuser/setsid for container/gui/gui (weak dep of systemd only)

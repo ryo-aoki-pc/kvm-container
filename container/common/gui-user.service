@@ -1,9 +1,9 @@
 [Unit]
-Description=Create the container's GUI/cockpit user from the host user (name, uid/gid, password)
+Description=Create the container's GUI user from the host user (name, uid/gid)
 DefaultDependencies=no
 After=local-fs.target
 # before logind: it reads /var/lib/systemd/linger only at startup, and gui-user-setup creates the linger file
-Before=systemd-logind.service cockpit.socket virtqemud.socket
+Before=systemd-logind.service virtqemud.socket
 
 [Service]
 Type=oneshot

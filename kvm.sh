@@ -1,23 +1,23 @@
 #!/bin/bash
-# Helper script for the qemu-kvm/libvirt/cockpit containers (AlmaLinux 10): "kvm" runs libvirt + qemu-kvm + cockpit
-# (privileged), "kvm-gui" runs firefox / virt-viewer on the host display (unprivileged, only with a display)
-# Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (cockpit only)
+# Helper script for the qemu-kvm/libvirt containers (AlmaLinux 10): "kvm" runs libvirt + qemu-kvm + virt-install
+# (privileged), "kvm-gui" runs virt-viewer on the host display (unprivileged, only with a display). The VMs are managed
+# from the command line (virsh / virt-install) and their screens are shown with virt-viewer
+# Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (kvm only, no screen)
 #   ./kvm.sh build [kvm|gui]  build the images (both by default; extra arguments go to podman build)
-#   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). cockpit: https://localhost:9091,
-#                             log in with your host user. After a host re-login, up recreates kvm-gui only (VMs keep running)
+#   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). After a host re-login,
+#                             up recreates kvm-gui only (VMs keep running)
 #   ./kvm.sh down [kvm|gui]   stop and remove the containers (VM data stays in data/ under the repository)
-#   ./kvm.sh firefox          open cockpit in the GUI container's firefox on the host display
-#   ./kvm.sh viewer <VM>      show a VM's screen with virt-viewer on the host display
-#   ./kvm.sh virsh ...        run virsh inside the kvm container
+#   ./kvm.sh virt-install ... create a VM (virt-install inside the kvm container; put ISOs under data/var-libvirt/images)
+#   ./kvm.sh virsh ...        run virsh inside the kvm container (list / start / shutdown / destroy / undefine ...)
+#   ./kvm.sh viewer [VM]      show a VM's screen with virt-viewer on the host display (no VM: choose one from a list)
 #   ./kvm.sh shell [kvm|gui]  root shell inside a container (default: kvm)
-#   ./kvm.sh logs [kvm|gui]   libvirt/cockpit journal (kvm) and GUI application logs (gui); both by default
+#   ./kvm.sh logs [kvm|gui]   libvirt journal (kvm) and GUI application logs (gui); both by default
 #   ./kvm.sh clean            remove the containers and everything under data/ (asks for confirmation)
-#   ./kvm.sh install-desktop  install .desktop entries and icons to launch from the Activities overview
+#   ./kvm.sh install-desktop  install a .desktop entry and icons to launch virt-viewer from the Activities overview
 #   ./kvm.sh uninstall-desktop  remove the above
-#   ./kvm.sh launch <app>     used by the .desktop entries (firefox): runs via sudo -n, reports failures as desktop notifications
+#   ./kvm.sh launch <app>     used by the .desktop entry (virt-viewer): runs via sudo -n, reports failures as desktop notifications
 # Environment variables:
 #   KVM_HOST=auto|wsl|generic|headless  override host type detection
-#   COCKPIT_BIND=127.0.0.1  COCKPIT_PORT=9091  cockpit bind address/port (use 0.0.0.0 to reach it from other PCs)
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see README)
 #   KVM_SOFTWARE_GL=1       force software rendering
@@ -27,23 +27,21 @@ cd "$(dirname "$0")"
 
 # two images (targets of the multi-stage Containerfile) and two containers. Names are fixed; the variable is not NAME
 # because WSL uses NAME for the hostname
-KVM_IMAGE=localhost/kvm-container/kvm:latest   # libvirt + qemu-kvm + cockpit
-GUI_IMAGE=localhost/kvm-container/gui:latest   # firefox / virt-viewer
+KVM_IMAGE=localhost/kvm-container/kvm:latest   # libvirt + qemu-kvm + virt-install
+GUI_IMAGE=localhost/kvm-container/gui:latest   # virt-viewer
 KVM_CONTAINER=kvm
 GUI_CONTAINER=kvm-gui
 PODMAN="sudo podman"
 KVM_HOST=${KVM_HOST:-auto}
-COCKPIT_BIND=${COCKPIT_BIND:-127.0.0.1}
-COCKPIT_PORT=${COCKPIT_PORT:-9091}     # not cockpit's usual 9090: the host often runs its own cockpit there (see check_host_network)
 KVM_BRIDGE=${KVM_BRIDGE:-}             # host bridge for VMs on the host's segment (libvirt network "bridged"); empty = NAT only
-HOST_USER=$(id -un)                    # the containers' GUI/cockpit user mirrors the invoking host user (name, uid/gid, password)
+HOST_USER=$(id -un)                    # the containers' GUI user mirrors the invoking host user (name, uid/gid)
 HOST_UID=$(id -u)
 HOST_GID=$(id -g)
 KVM_DATA_DIR=$PWD/data                 # persistent data (var-libvirt / etc-libvirt / home), inside the repository
 KVM_RUN_DIR=/run/kvm-container         # host directory shared by the containers: libvirt/ is /run/libvirt in both (on tmpfs, wiped by up/down)
 HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the GUI container
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
-DESKTOP_APPS="firefox"                 # apps that get a .desktop entry (subcommand names of container/gui/gui)
+DESKTOP_APPS="virt-viewer"             # apps that get a .desktop entry (subcommand names of container/gui/gui)
 
 # host-specific behaviour: generic defaults here; host/wsl.sh overrides them when running on WSL2
 host_kvm_missing_hint() {   # /dev/kvm is still missing after modprobe
@@ -73,29 +71,15 @@ ensure_kvm() {
   sudo chmod 666 /dev/kvm
 }
 
-# build the podman arguments that describe the invoking host user: name and uid/gid (HOST_ARGS, both containers) and
-# the password hash (HASH_ARGS, kvm only: cockpit authenticates against the container's /etc/shadow; the GUI container
-# only needs the uid to reach the host session's sockets). gui-user.service in each container renames the template
-# user to this name and applies them. The hash is passed through an env file (never on the command line); ENV_FILE is
-# removed on exit
+# build the podman arguments (HOST_ARGS, both containers) that describe the invoking host user: name and uid/gid.
+# gui-user.service in each container creates the GUI user from them; the uid has to match the host's so that the
+# read-only mount of the host session's runtime dir (0700) is reachable. No password is passed: nothing logs in to
+# the containers (the apps are started with runuser, kvm.sh uses podman exec)
 HOST_ARGS=()
-HASH_ARGS=()
-ENV_FILE=
 host_user_args() {
-  local hash
   [ ${#HOST_ARGS[@]} -eq 0 ] || return 0     # already built
   [ "$HOST_UID" != 0 ] || { echo "!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)" >&2; exit 1; }
   HOST_ARGS=(-e "HOST_USER=$HOST_USER" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
-  hash=$(sudo getent shadow "$HOST_USER" | cut -d: -f2)
-  case "$hash" in
-    ""|"!"*|"*"*)
-      echo "!! $HOST_USER has no usable password on the host; cockpit login will not work until one is set (passwd), then ./kvm.sh down kvm && ./kvm.sh up" >&2 ;;
-    *)
-      ENV_FILE=$(mktemp)
-      trap 'rm -f "$ENV_FILE"' EXIT
-      printf 'HOST_PASSWORD_HASH=%s\n' "$hash" >"$ENV_FILE"
-      HASH_ARGS=(--env-file "$ENV_FILE") ;;
-  esac
 }
 
 # build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio, GPU) into the GUI container.
@@ -199,13 +183,6 @@ check_host_network() {
     echo "!! virbr0 already exists on the host (a libvirt running on the host, or a leftover from a crashed container)." >&2
     echo "   The container's default network will fail to start; remove it if it is a leftover: sudo ip link del virbr0" >&2
   fi
-  # cockpit-ws binds on the host itself, so anything already listening on that port makes the container's
-  # cockpit.socket fail with "Address already in use". The default is 9091 to stay clear of the host's own cockpit
-  if command -v ss >/dev/null 2>&1 && [ -n "$(ss -H -ltn "sport = :$COCKPIT_PORT" 2>/dev/null)" ]; then
-    echo "!! port $COCKPIT_PORT is already in use on the host, so the container's cockpit cannot start." >&2
-    echo "   Free the port, or pick another one: COCKPIT_PORT=9092 ./kvm.sh up" >&2
-    exit 1
-  fi
 }
 
 # register the host bridge as the libvirt network "bridged" (persisted in data/etc-libvirt), or drop it when KVM_BRIDGE is unset
@@ -226,7 +203,7 @@ sync_bridged_network() {
     | $PODMAN exec -i "$KVM_CONTAINER" virsh -c qemu:///system net-define /dev/stdin >/dev/null
   virsh_in net-autostart bridged >/dev/null
   virsh_in net-start bridged >/dev/null
-  echo ">> libvirt network \"bridged\" -> host bridge $KVM_BRIDGE (choose it when creating a VM, or virt-install --network network=bridged)"
+  echo ">> libvirt network \"bridged\" -> host bridge $KVM_BRIDGE (use it with ./kvm.sh virt-install ... --network network=bridged)"
 }
 
 # where .desktop files / icons go (the login user's area)
@@ -235,10 +212,11 @@ desktop_dirs() {
   ICON_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/icons
 }
 
-# drop the virt-manager launcher an older revision of this repository installed: it is no longer shipped, and its
-# Exec (kvm.sh launch virt-manager) would only fail. Call after desktop_dirs
+# drop the launchers older revisions of this repository installed (virt-manager, then firefox for cockpit): they are
+# no longer shipped, and their Exec (kvm.sh launch <app>) would only fail. Call after desktop_dirs
 remove_legacy_desktop() {
-  rm -f "$DESKTOP_DIR/kvm-virt-manager.desktop" "$ICON_DIR"/hicolor/*/apps/virt-manager.* 2>/dev/null || true
+  rm -f "$DESKTOP_DIR/kvm-virt-manager.desktop" "$DESKTOP_DIR/kvm-firefox.desktop" \
+        "$ICON_DIR"/hicolor/*/apps/virt-manager.* "$ICON_DIR"/hicolor/*/apps/firefox.* 2>/dev/null || true
 }
 
 # report a launch (.desktop) failure as a desktop notification; stderr only if no notification tool is available
@@ -269,7 +247,7 @@ build_image() {   # build_image kvm|gui [podman build arguments]
   $PODMAN build --target "$role" -t "$(image_of "$role")" -f Containerfile "$@" .
 }
 
-# start the kvm container (libvirt/qemu/cockpit) unless it is running
+# start the kvm container (libvirt/qemu) unless it is running
 start_kvm() {
   if running "$KVM_CONTAINER"; then echo ">> $KVM_CONTAINER is already running"; return 0; fi
   ensure_kvm
@@ -284,30 +262,22 @@ start_kvm() {
   # must start empty: sockets, pid files and VM state of a previous run would confuse the daemons. Only the contents are
   # removed, never the directory: a running GUI container has it bind-mounted and would keep seeing the old inode
   sudo mkdir -p "$KVM_RUN_DIR/libvirt" && sudo find "$KVM_RUN_DIR/libvirt" -mindepth 1 -delete
-  # --network host: VMs can be bridged onto the host's segment. cockpit then listens on the host directly, so its
-  # bind address/port is passed to the container (cockpit-listen generator) instead of using podman's -p
+  # --network host: VMs can be bridged onto the host's segment (libvirt's bridges and the VMs' VNC displays live on the host)
   $PODMAN run -d --name "$KVM_CONTAINER" --hostname "$KVM_CONTAINER" \
     --privileged --systemd=always --network host \
     --device /dev/kvm --device /dev/net/tun \
-    -e "COCKPIT_LISTEN=$COCKPIT_BIND:$COCKPIT_PORT" \
     -v "$KVM_DATA_DIR/var-libvirt:/var/lib/libvirt" \
     -v "$KVM_DATA_DIR/etc-libvirt:/etc/libvirt" \
     -v "$KVM_DATA_DIR/home:/home/$HOST_USER" \
     -v "$KVM_RUN_DIR/libvirt:/run/libvirt" \
     "${HOST_ARGS[@]}" \
-    ${HASH_ARGS[@]+"${HASH_ARGS[@]}"} \
     -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
     "$KVM_IMAGE" >/dev/null
-  echo ">> waiting for libvirt/cockpit..."
+  echo ">> waiting for libvirt..."
   for _ in $(seq 1 30); do
-    if $PODMAN exec "$KVM_CONTAINER" sh -c 'systemctl is-active -q cockpit.socket 2>/dev/null && virsh -c qemu:///system list >/dev/null 2>&1'; then
+    if $PODMAN exec "$KVM_CONTAINER" virsh -c qemu:///system list >/dev/null 2>&1; then
       sync_bridged_network
-      if [ "$COCKPIT_BIND" = 0.0.0.0 ] || [ "$COCKPIT_BIND" = "::" ]; then
-        echo ">> ready. cockpit: https://$(uname -n):$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
-        echo ">> to reach it from other PCs (firewalld): sudo firewall-cmd --add-port=$COCKPIT_PORT/tcp --permanent && sudo firewall-cmd --reload"
-      else
-        echo ">> ready. cockpit: https://$COCKPIT_BIND:$COCKPIT_PORT  (log in with your host user: $HOST_USER)"
-      fi
+      echo ">> ready. VMs: ./kvm.sh virt-install ... | ./kvm.sh virsh list | ./kvm.sh viewer <VM>"
       return 0
     fi
     sleep 1
@@ -343,18 +313,17 @@ start_gui() {
   sudo mkdir -p "$KVM_RUN_DIR/libvirt" "$KVM_DATA_DIR/home"
   # unprivileged, but without SELinux label separation (label=disable): it connects to the unix sockets the privileged
   # kvm container creates in the shared /run/libvirt and reads the host session's runtime dir. --network host so that
-  # firefox reaches cockpit on localhost and the VNC consoles on the host's loopback
+  # virt-viewer reaches the VMs' VNC displays on the host's loopback
   $PODMAN run -d --name "$GUI_CONTAINER" --hostname "$GUI_CONTAINER" \
     --systemd=always --network host --security-opt label=disable \
     --label "kvm.gui-session=$session" \
-    -e "COCKPIT_LISTEN=$COCKPIT_BIND:$COCKPIT_PORT" \
     -v "$KVM_DATA_DIR/home:/home/$HOST_USER" \
     -v "$KVM_RUN_DIR/libvirt:/run/libvirt" \
     "${HOST_ARGS[@]}" \
     "${GUI_ARGS[@]}" \
     -e "TZ=${TZ:-Asia/Tokyo}" --shm-size 2g \
     "$GUI_IMAGE" >/dev/null
-  echo ">> $GUI_CONTAINER started. host display: ./kvm.sh firefox | ./kvm.sh viewer <VM>"
+  echo ">> $GUI_CONTAINER started. VM screen: ./kvm.sh viewer [VM]"
 }
 
 usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
@@ -372,7 +341,7 @@ case "$cmd" in
       ""|kvm) start_kvm ;;
     esac
     case "$role" in
-      "")  if have_display; then start_gui; else echo ">> no display found: GUI disabled, use cockpit in a browser"; fi ;;
+      "")  if have_display; then start_gui; else echo ">> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)"; fi ;;
       gui) have_display || { echo "!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed" >&2; exit 1; }
            start_gui ;;
     esac
@@ -391,17 +360,17 @@ case "$cmd" in
             [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> aborted"; exit 1; }
           fi
           sudo rm -rf "$KVM_DATA_DIR" ;;
-  firefox|viewer)
-    have_display || { echo "!! no display found: use cockpit in a browser (https://$COCKPIT_BIND:$COCKPIT_PORT)" >&2; exit 2; }
+  viewer)
+    have_display || { echo "!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): virt-viewer needs a desktop session; manage the VMs with ./kvm.sh virsh" >&2; exit 2; }
     "$0" up          # starts what is missing, recreates the GUI container after a host re-login
-    [ "$cmd" != viewer ] || cmd=virt-viewer
-    $PODMAN exec "$GUI_CONTAINER" gui "$cmd" "$@" ;;
+    $PODMAN exec "$GUI_CONTAINER" gui virt-viewer "$@" ;;
+  virt-install) $PODMAN exec -it "$KVM_CONTAINER" virt-install --connect qemu:///system "$@" ;;
   virsh)  $PODMAN exec -it "$KVM_CONTAINER" virsh -c qemu:///system "$@" ;;
   shell)  $PODMAN exec -it "$(container_of "${role:-kvm}")" bash ;;
   logs)
     if [ "$role" != gui ]; then
       if running "$KVM_CONTAINER"; then
-        $PODMAN exec "$KVM_CONTAINER" journalctl --no-pager -n 30 -u kvm-libvirt-conf -u virtqemud -u cockpit.socket -u gui-user
+        $PODMAN exec "$KVM_CONTAINER" journalctl --no-pager -n 30 -u kvm-libvirt-conf -u virtqemud -u gui-user
       else echo ">> $KVM_CONTAINER is not running"; fi
     fi
     if [ "$role" != kvm ]; then
@@ -414,7 +383,7 @@ case "$cmd" in
     # for .desktop entries (Activities). There is no terminal to ask for the sudo password, so podman is run with sudo -n;
     # passwordless sudo for podman must be configured beforehand
     app=${1:-}
-    case "$app" in firefox) ;; *) echo "usage: $0 launch firefox" >&2; exit 1 ;; esac
+    case "$app" in virt-viewer) ;; *) echo "usage: $0 launch virt-viewer" >&2; exit 1 ;; esac
     if ! err=$(sudo -n podman exec "$GUI_CONTAINER" gui "$app" 2>&1); then
       case "$err" in
         *password*) hint="configure passwordless sudo for podman (launch runs sudo -n without a terminal)" ;;
@@ -429,11 +398,11 @@ case "$cmd" in
     [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user logged in to the desktop" >&2; exit 1; }
     desktop_dirs
     $PODMAN image exists "$GUI_IMAGE" || build_image gui
-    # 1) icons: extract only the firefox icons from hicolor in the GUI image (a generic icon is shown if this fails)
+    # 1) icons: extract only the virt-viewer icons from hicolor in the GUI image (a generic icon is shown if this fails)
     mkdir -p "$ICON_DIR" "$DESKTOP_DIR"
     (set +o pipefail
      $PODMAN run --rm --network none "$GUI_IMAGE" sh -c \
-       'cd /usr/share/icons && find hicolor -type f -path "*/apps/firefox.*" | tar -cf - -T -' \
+       'cd /usr/share/icons && find hicolor -type f -path "*/apps/virt-viewer.*" | tar -cf - -T -' \
        | tar -xf - -C "$ICON_DIR") 2>/dev/null || true
     # 2) .desktop entries
     remove_legacy_desktop
@@ -443,7 +412,7 @@ case "$cmd" in
     done
     if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q "$DESKTOP_DIR" || true; fi
     echo ">> installed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/"
-    echo ">> search for \"Firefox\" in the Activities overview to launch it (start the containers with ./kvm.sh up first;"
+    echo ">> search for \"Virt Viewer\" in the Activities overview to launch it (start the containers with ./kvm.sh up first;"
     echo ">>  launch runs sudo -n podman, so passwordless sudo for podman must be configured)"
     ;;
   uninstall-desktop)
@@ -451,7 +420,7 @@ case "$cmd" in
     desktop_dirs
     for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
     remove_legacy_desktop
-    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/firefox.*"
+    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/virt-viewer.*"
     ;;
   *)      usage ;;
 esac
