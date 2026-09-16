@@ -2,8 +2,8 @@
 # start a GUI app inside the GUI container (kvm-gui) as the GUI user (the host user mirrored by gui-user.service) on the
 # host display (Wayland/X11). libvirt runs in the kvm container: the apps reach it through /run/libvirt, which is a
 # host directory shared by both containers (see kvm.sh), and the GUI user is in the libvirt group that owns the sockets
-#   gui firefox            -> opens cockpit (served by the kvm container on the host's network)
-#   gui virt-viewer <vm>
+#   gui virt-viewer [vm]   -> virt-viewer --connect qemu:///system --attach [--wait vm]
+#                             (without a VM name, virt-viewer opens a dialog to choose one from the list of VMs)
 # DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts, as absolute paths
 # into the read-only mounts of the host session (the host's XDG_RUNTIME_DIR is mounted at HOST_RUNTIME_DIR).
 # XDG_RUNTIME_DIR is NOT the host's: the apps use the container's own /run/user/<uid>, which logind creates for the
@@ -28,11 +28,10 @@ GUI_GID=$(id -g "$GUI_USER")
 HOST_RUNTIME_DIR=${HOST_RUNTIME_DIR:-/run/host-xdg-runtime}
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
   echo "!! GUI unavailable: the container was started without a display (headless)." >&2
-  echo "   Use cockpit in a browser instead: https://<host>:<COCKPIT_PORT> (log in with your host user)" >&2
+  echo "   Manage the VMs from the command line instead: ./kvm.sh virsh ... / ./kvm.sh virt-install ..." >&2
   exit 2
 fi
 export XDG_RUNTIME_DIR=/run/user/$GUI_UID
-export MOZ_ENABLE_WAYLAND=${MOZ_ENABLE_WAYLAND:-1}
 export GDK_BACKEND=${GDK_BACKEND:-wayland,x11}
 export GSETTINGS_BACKEND=${GSETTINGS_BACKEND:-keyfile}
 export LANG=${LANG:-ja_JP.UTF-8}
@@ -53,16 +52,11 @@ if [ -z "${XAUTHORITY:-}" ]; then
 fi
 
 cmd=("$@")
-if [ "${1:-}" = "firefox" ] && [ $# -eq 1 ]; then
-  # cockpit's port comes from kvm.sh as COCKPIT_LISTEN=<bind>:<port> in PID 1's environment (COCKPIT_BIND/COCKPIT_PORT).
-  # Always connect to localhost: the bind address may be 0.0.0.0 or ::
-  cockpit_port=$(tr '\0' '\n' </proc/1/environ | sed -n 's/^COCKPIT_LISTEN=//p')
-  cockpit_port=${cockpit_port##*:}
-  cmd=(firefox --new-instance "https://localhost:${cockpit_port:-9091}")
-fi
 if [ "${1:-}" = "virt-viewer" ]; then
-  # expand virt-viewer <vm> to virt-viewer --attach --wait <vm>
-  cmd=(virt-viewer --connect qemu:///system --attach --wait "${@:2}")
+  # expand virt-viewer [vm] to virt-viewer --attach [--wait vm]. --wait needs a VM name (virt-viewer refuses it without
+  # one); with no name at all, virt-viewer shows a dialog to pick the VM from the list of domains
+  cmd=(virt-viewer --connect qemu:///system --attach)
+  [ $# -lt 2 ] || cmd+=(--wait "${@:2}")
 fi
 
 # right after the container starts, wait for the rest of the boot: logind has to be up before user@<uid>.service can
@@ -82,5 +76,5 @@ chmod 0666 /dev/dri/renderD* 2>/dev/null || true
 
 # runuser without --login passes the whole environment on: the variables exported above plus what podman exec inherited
 # from the container's configuration. Drop the host user's identity before the app can see it (/proc/<pid>/environ)
-unset HOST_PASSWORD_HASH HOST_USER HOST_UID HOST_GID
+unset HOST_USER HOST_UID HOST_GID
 exec setsid -f runuser -u "$GUI_USER" -- "${cmd[@]}" >>/var/log/gui.log 2>&1

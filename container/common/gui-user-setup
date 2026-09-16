@@ -1,19 +1,19 @@
 #!/bin/bash
-# create the container's GUI/cockpit user as a copy of the host user: name, uid/gid, groups and password hash
+# create the container's GUI user as a copy of the host user: name, uid/gid and groups
 # (the host's runtime dir is mounted read-only at /run/host-xdg-runtime and is 0700, so the uid must match to reach the
-#  Wayland/X11 sockets in it; cockpit authenticates against the container's /etc/shadow, so the host password hash is copied in)
-# HOST_USER / HOST_UID / HOST_GID / HOST_PASSWORD_HASH are passed with podman run -e / --env-file and can only be
-# read from the environment of PID 1 (systemd). The images ship no user of their own: the one created here is the only
-# unprivileged user, so a container started without those variables (i.e. not by kvm.sh) simply has none.
+#  Wayland/X11 sockets in it; data/home is bind-mounted at /home/<user> in both containers and is owned by this uid)
+# HOST_USER / HOST_UID / HOST_GID are passed with podman run -e and can only be read from the environment of PID 1
+# (systemd). The images ship no user of their own: the one created here is the only unprivileged user, so a container
+# started without those variables (i.e. not by kvm.sh) simply has none. No password is set, so the user stays locked:
+# nothing logs in to the containers (gui starts the apps with runuser, kvm.sh uses podman exec as root).
 # The user is also made to linger: logind then starts its systemd --user instance at boot, which gives the container
-# its OWN /run/user/<uid> (a tmpfs) with a session bus for the GUI apps and cockpit-bridge, and keeps it when the last
-# cockpit session ends. Nothing here touches the host's runtime dir (it is never mounted at /run/user/<uid>, see kvm.sh)
+# its OWN /run/user/<uid> (a tmpfs) with a session bus for the GUI apps. Nothing here touches the host's runtime dir
+# (it is never mounted at /run/user/<uid>, see kvm.sh)
 set -e
 env_of_pid1() { tr '\0' '\n' </proc/1/environ | sed -n "s/^$1=//p"; }
 # same effect as loginctl enable-linger, but works before logind is running (this service runs in sysinit.target)
 enable_linger() { mkdir -p /var/lib/systemd/linger && touch "/var/lib/systemd/linger/$1"; }
 user=$(env_of_pid1 HOST_USER); want_uid=$(env_of_pid1 HOST_UID); want_gid=$(env_of_pid1 HOST_GID)
-hash=$(env_of_pid1 HOST_PASSWORD_HASH)
 if [ -z "$user" ] || [ -z "$want_uid" ]; then
   echo "gui-user: HOST_USER/HOST_UID not passed (container not started by kvm.sh); no GUI user is created"
   exit 0
@@ -38,7 +38,8 @@ if ! getent passwd "$user" >/dev/null; then
   fi
   echo "gui-user: create user $user (uid $want_uid, gid $want_gid, home /home/$user)"
   # -m only matters when /home/<user> is absent: it is normally the bind mount of data/home, and useradd then keeps
-  # the existing directory (no skel copy; kvm.sh seeds data/home from /etc/skel instead). The chown below fixes the owner
+  # the existing directory (no skel copy; kvm.sh seeds data/home from /etc/skel instead). The chown below fixes the owner.
+  # useradd leaves the password locked ("!"), which is what we want
   useradd -m -u "$want_uid" -g "$want_gid" "$user"
 else
   # the user survives a restart of the container (kvm.sh up always recreates it, so this is for podman restart and the
@@ -58,20 +59,12 @@ else
   fi
 fi
 
-# supplementary groups, whichever of them this image has: wheel for cockpit's administrative access (sudo), libvirt for
-# the sockets in the shared /run/libvirt, video/render for /dev/dri (what the GUI apps need; the gui image creates them)
-for g in wheel libvirt video render; do
+# supplementary groups, whichever of them this image has: libvirt for the sockets in the shared /run/libvirt,
+# video/render for /dev/dri (what the GUI apps need; the gui image creates them)
+for g in libvirt video render; do
   getent group "$g" >/dev/null || continue
   usermod -aG "$g" "$user"
 done
-
-if [ -n "$hash" ]; then
-  echo "gui-user: set the host password hash for $user"
-  usermod -p "$hash" "$user"
-else
-  echo "gui-user: no host password hash passed; $user stays locked (cockpit login not possible)"
-  usermod -L "$user"
-fi
 
 echo "gui-user: enable lingering for $user (container-private /run/user/$want_uid and session bus from boot)"
 enable_linger "$user"
