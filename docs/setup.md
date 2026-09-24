@@ -1,8 +1,8 @@
-# qemu-kvm コンテナ 導入手順 (AlmaLinux 10 / podman、Windows + WSL2 / 物理 GNOME / ディスプレイ無し)
+# qemu-kvm コンテナ 導入手順 (AlmaLinux 10 / podman、物理 GNOME / ディスプレイ無し)
 
 ## 実施手順
 
-**すべて対象ホストの一般ユーザーのシェルで実行する** (root や `sudo -i` のシェルは不可。`kvm.sh` は root で実行すると `!! run kvm.sh as a regular user, not root` で止まる)。画面を使うなら GNOME にログインした端末 (Windows + WSL2 では WSLg の動くディストリの端末) から実行する。手順 1 と手順 3 は sudo のパスワードを聞かれる (手順 1 は `[y/N]` も)。手順 4 も sudo のタイムスタンプが切れていれば聞かれる。手順 0 で変数を設定したシェルで、上から順にコードブロックを貼る。理由・実測・落とし穴は[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [SPEC.md](SPEC.md)。
+**すべて対象ホストの一般ユーザーのシェルで実行する** (root や `sudo -i` のシェルは不可。`kvm.sh` は root で実行すると `!! run kvm.sh as a regular user, not root` で止まる)。画面を使うなら GNOME にログインした端末から実行する。手順 1 と手順 3 は sudo のパスワードを聞かれる (手順 1 は `[y/N]` も)。手順 4 も sudo のタイムスタンプが切れていれば聞かれる。手順 0 で変数を設定したシェルで、上から順にコードブロックを貼る。理由・実測・落とし穴は[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [SPEC.md](SPEC.md)。
 
 この手順を通すと、[VM の作成と操作](vm.md)、[アクティビティから起動する](desktop.md)、[ブリッジ](bridge.md) の各手順書が使える。
 
@@ -10,7 +10,7 @@
 |---|---|
 | [0. 変数を設定する](#0-変数を設定する) | `REPO` (clone 先) を確認し、読み戻す |
 | [1. podman を入れる](#1-podman-を入れる) | `dnf install podman`。qemu / libvirt / virt-viewer はホストに入れない |
-| [2. ホストを準備する (種別ごとに 1 つ選ぶ)](#2-ホストを準備する-種別ごとに-1-つ選ぶ) | WSL2 / 物理 GNOME / ディスプレイ無しのうち、自分のホストの 1 つだけ |
+| [2. ホストを準備する (種別ごとに 1 つ選ぶ)](#2-ホストを準備する-種別ごとに-1-つ選ぶ) | 物理 GNOME / ディスプレイ無しのうち、自分のホストの 1 つだけ |
 | [3. イメージをビルドする](#3-イメージをビルドする) | `./kvm.sh build` (最初の `sudo podman`) |
 | [4. 起動する](#4-起動する) | `./kvm.sh up`。初回は `data/` の初期化を含む |
 | [5. 動作確認する](#5-動作確認する) | 両コンテナが `running`、libvirt のソケット権限、コンテナをまたぐ `virsh` |
@@ -41,7 +41,7 @@ ls -l "${REPO}/kvm.sh"
 sudo dnf install podman
 ```
 
-sudo のパスワードと `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。** WSL2 で AlmaLinux 以外のディストリを使うなら、そのディストリのパッケージ管理で podman を入れる。
+sudo のパスワードと `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
 
 ```bash
 rpm -q podman
@@ -53,30 +53,7 @@ rpm -q podman
 
 **上から順ではなく、自分のホストに当てはまる 1 つだけを行う。**
 
-#### A. Windows 11 + WSL2
-
-Windows 側 (PowerShell) で WSL の版を確認する。WSL 2.5.1 以降であること (cgroup v2 が既定)。
-
-```
-wsl --version
-```
-
-ネストした仮想化は Windows 11 では既定で有効。無効なら `%USERPROFILE%\.wslconfig` に次を書いて `wsl --shutdown` する。
-
-```
-[wsl2]
-nestedVirtualization=true
-```
-
-ディストリ側では、`modprobe` が無いときだけ `kmod` を入れる (KVM モジュールは `./kvm.sh up` が自動でロードする)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く)。
-
-```bash
-sudo dnf install kmod   # modprobe が無いときだけ
-```
-
-`[y/N]` の確認がある。次のブロック (手順 3) はインストールが終わってから貼る。
-
-#### B. 物理マシン / VM の AlmaLinux 10 + GNOME
+#### A. 物理マシン / VM の AlmaLinux 10 + GNOME
 
 ファームウェアで SVM (AMD) / VT-x (Intel) を有効にしておく。SELinux は Enforcing のままでよい (`--privileged` のためラベル分離は無効)。**GNOME にログインした状態の端末から** `kvm.sh` を実行する (`DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` を元に `kvm-gui` へ表示先を渡すため)。
 
@@ -85,7 +62,7 @@ getenforce                                            # Enforcing のままで�
 env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
 ```
 
-#### C. ディスプレイの無いホスト (SSH のみ)
+#### B. ディスプレイの無いホスト (SSH のみ)
 
 何もしない。`./kvm.sh up` は `kvm` コンテナだけを起動し、GUI イメージはビルドしない。VM の作成・操作は `./kvm.sh virt-install` / `./kvm.sh virsh` で行う。画面は表示できないので、ゲストにはシリアルコンソールやネットワーク経由でアクセスする ([VM の作成と操作](vm.md) の手順 3)。
 
@@ -113,7 +90,7 @@ cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}" &&
 
 - 初回は `>> seeding …/data/var-libvirt from image …` のように `data/` の初期化が 3 回出る。`>> ready. VMs: …` が出れば `kvm` は起動している。ディスプレイがあれば続けて `>> kvm-gui started. VM screen: ./kvm.sh viewer [VM]` が出る
 - ディスプレイの無いホストでは `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)` が出る。これは正常
-- `!! /dev/kvm not found …` で止まったら、手順 2 のネストした仮想化 (WSL2) / SVM・VT-x (物理) を見直す
+- `!! /dev/kvm not found …` で止まったら、ファームウェアの SVM (AMD) / VT-x (Intel) を見直す (手順 2)
 - `!! virbr0 already exists on the host …` は、ホスト自身で libvirt が動いているか、前回のコンテナの残骸。警告だけで `up` は止まらず `kvm` は起動してしまうので、残骸なら `./kvm.sh down` でコンテナを消し、`sudo ip link del virbr0` で消してから `up` し直す ([注意点](#注意点))
 - **次のブロックは `>> ready.` が出てから貼る**
 
@@ -206,20 +183,20 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 - **目的**: qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナに収め、qemu も libvirt も入れていない軽量なホストで VM を動かし、その画面をホストのデスクトップに表示する。VM の作成・操作はコマンドライン (`virt-install` / `virsh`)、画面の表示は virt-viewer (ブラウザや Web コンソールは使わない)。`kvm-gui` は `kvm` の libvirt に共有 unix ソケット経由で接続する。デスクトップの再ログイン後は `kvm-gui` だけを作り直せるので、VM を止めずに済む。ディスプレイの無いホストでは `kvm` だけを使う (GUI イメージのビルドも不要)
 - **進め方**: ホストに入れるのは podman だけ。`kvm.sh` が `sudo podman` でビルド・起動・停止をすべて行う。読者が書き換えるのは手順 0 の `REPO` だけ (既定の clone 先ならそれも不要)
-- **状態**: 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通しの動作確認済み (PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`。PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式)。Windows 11 + WSL2 (WSLg) は 1 コンテナ構成の頃 (PR #12 `4e60c56`: `KVM_HOST=wsl` / `generic` / `headless` の分岐、PR #14 `7b42e14`: `--network host`、`down` で `virbr0` が消える、`default` の VM が DHCP) に確認したもので、**2 コンテナ構成 (PR #18) 以降の実行記録は無い**。**ディスプレイの無いホストは通しで検証していない** (`KVM_HOST=headless` の分岐は PR #12 で WSL2 上で確認)。手順 3 の `cd "${REPO:?…}" && ./kvm.sh build`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `cd "${REPO:?…}" && ./kvm.sh up && ./kvm.sh viewer "${VM_NAME:?…}"` (WSL2) と `./kvm.sh viewer "${VM_NAME:?…}"` は README の例を変数形に書き換えたもので、その形では再実行していない。手順 0 の `ls -l "${REPO}/kvm.sh"`、手順 1 の `rpm -q podman`、手順 2 の `wsl --version` のブロック、手順 5 の `./kvm.sh virsh list --all`、「表示先が変わったとき」の `./kvm.sh up gui` のブロックは新規の確認行で本実行していない (手順 5 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
+- **状態**: 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み (PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`。PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式)。**ディスプレイの無いホストは PR #28 で通した** (AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル。`build` → `KVM_HOST=headless` での `up` → 下の付録の確認一式 → `down` → `clean`)。**ただしそのホストでは VM を作っていない** (`virt-install` / `virsh console` は未実施)。手順 3 の `cd "${REPO:?…}" && ./kvm.sh build`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"` は README の例を変数形に書き換えたもので、その形では再実行していない。手順 0 の `ls -l "${REPO}/kvm.sh"`、手順 1 の `rpm -q podman`、手順 5 の `./kvm.sh virsh list --all`、「表示先が変わったとき」の `./kvm.sh up gui` のブロックは新規の確認行で本実行していない (手順 5 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
 
-| 項目 | 物理 AlmaLinux 10 + GNOME | Windows + WSL2 | ディスプレイ無し |
-|---|---|---|---|
-| ホスト | AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD | Windows 11 + WSL2 (WSLg)。ディストリは記録に無い | — |
-| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成) | PR #12 / #14 (1 コンテナ構成、firefox / cockpit の頃) | 未検証 |
-| 画面表示 | GNOME (Wayland) デスクトップ | WSLg 経由で Windows デスクトップ | 無し |
-| `KVM_BRIDGE` | 未検証 (NIC が無線のみ) | ダミーブリッジで機構を確認 ([bridge.md](bridge.md#対象と検証環境)) | — |
+| 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
+|---|---|---|
+| ホスト | AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD x86_64 | AlmaLinux 10.2 (Raspberry Pi 5、aarch64)、SELinux Enforcing、podman 5.8.2、グラフィカルセッション外のシェル (`DISPLAY` / `WAYLAND_DISPLAY` 未設定) |
+| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成) | PR #28 (現行の 2 コンテナ構成) |
+| 画面表示 | GNOME (Wayland) デスクトップ | 無し (`>> no display found: GUI disabled ...`) |
+| VM の作成・操作 | ライフサイクル一式 (PR #26。[vm.md](vm.md)) | 未実施 (`virsh list` が通るところまで) |
+| `KVM_BRIDGE` | 未検証 (NIC が無線のみ) | 未検証 |
 
 対応ホスト:
 
 | ホスト | 画面表示 |
 | --- | --- |
-| Windows 11 + WSL2 (AlmaLinux 10 など任意のディストリ) | WSLg 経由で Windows デスクトップに表示 |
 | 物理マシン / VM の AlmaLinux 10 + GNOME | GNOME (Wayland) デスクトップに表示 |
 | ディスプレイの無いホスト (SSH のみ) | 画面表示なし。VM の作成・操作は `./kvm.sh virt-install` / `./kvm.sh virsh` |
 
@@ -239,10 +216,10 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 | 項目 | 状態 |
 |---|---|
-| ホスト OS | AlmaLinux 10 (物理 / VM / WSL2 のディストリ)。qemu・libvirt・virt-viewer は未導入のままでよい |
+| ホスト OS | AlmaLinux 10 (物理 / VM)。qemu・libvirt・virt-viewer は未導入のままでよい |
 | podman | 未導入、または導入済み (root で使う) |
-| 仮想化支援 | KVM が使える CPU (SVM / VT-x が有効)。WSL2 はネストした仮想化 |
-| 画面 | GNOME (Wayland) のセッション、または WSLg。無ければ `kvm` だけを使う |
+| 仮想化支援 | KVM が使える CPU (SVM / VT-x が有効。VM の中で動かすならネストした仮想化) |
+| 画面 | GNOME (Wayland) のセッション。無ければ `kvm` だけを使う |
 | `/dev/kvm` | 無くてよい。`up` が `kvm_amd` / `kvm_intel` をロードして 0666 にする |
 | ホスト上の libvirt | 動いていないこと (`virbr0` / 192.168.122.0/24 が衝突する) |
 | リポジトリ | ユーザーのホームディレクトリ配下に clone 済み。`data/` はまだ無い |
@@ -259,7 +236,6 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 - **コンテナをまたぐ libvirt 接続**: `/run/libvirt` はホストの `/run/kvm-container/libvirt` (tmpfs) を両コンテナにバインドマウントしたもの。別コンテナからの接続では、デーモンが `SO_PEERCRED` で得る pid が 0 になる (pid 名前空間が違う) ため、libvirt 既定の polkit 認証は使えない。代わりに `auth_unix_rw = "none"` にし、ソケットの権限 (`root:libvirt 0660`) でアクセスを制限する。モジュラーデーモンは systemd のソケット活性化なので、権限は `/etc/libvirt/*.conf` の `unix_sock_*` ではなく `virt*d.socket` の drop-in (`container/kvm/virtd-socket.conf`) で決まる。`libvirt` グループの gid は両イメージで同じ値に固定し (Containerfile の `LIBVIRT_GID`)、`kvm-gui` 側のユーザーがこのグループでソケットに届くようにする。`/etc/libvirt` はホストの `data/etc-libvirt` で空のときしかイメージから初期化されないため、`auth_unix_rw` と qemu.conf の設定 (`security_driver = "none"`、`namespaces = []`) は `kvm` の起動時に `kvm-libvirt-conf.service` が毎回冪等に書き込む (既存の `data/` もそのまま使える)。詳細は [SPEC.md 3.5](SPEC.md#35-コンテナ間の-libvirt-接続) と [6 章](SPEC.md#6-設計上の不変条件)
 - **`sudo podman`**: `kvm.sh` は root の podman を `sudo` で呼ぶ (`PODMAN="sudo podman"` 固定)。`--privileged`、`--network host`、`/dev/kvm` の受け渡し、ホストの `/run` 配下のディレクトリ共有のため。利用者は `sudo` を付けずに `./kvm.sh` を実行する
 - **`data/` はバインドマウント**: リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントする。バインドマウントは named volume と違い初回にイメージ側の内容をコピーしないため、空のときだけ `kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([手順 4 の補足](#手順-4-起動する))
-- **ホスト種別の差異は `host_*` フック**: `kvm.sh` に汎用実装 (`host_kvm_missing_hint` / `host_default_runtime_dir` / `host_force_software_gl`) を置き、`host/wsl.sh` が WSL2 検出時だけ上書きする ([SPEC.md 5.6](SPEC.md#56-ホスト種別フック-host_))
 
 ### 手順の補足
 
@@ -269,12 +245,11 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 #### 手順 1: podman
 
-`kvm.sh` は `sudo podman` 固定で、rootless podman は使わない。ホストの libvirt とは無関係なので、ホストに qemu・libvirt を入れてはいけないわけではないが、入れて動かしていると `virbr0` が衝突する ([注意点](#注意点))。WSL2 では `/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く)。ホスト要件は [SPEC.md 2.2](SPEC.md#22-ホスト要件)、実行ユーザーの要件は [2.3](SPEC.md#23-実行ユーザーの要件)。
+`kvm.sh` は `sudo podman` 固定で、rootless podman は使わない。ホストの libvirt とは無関係なので、ホストに qemu・libvirt を入れてはいけないわけではないが、入れて動かしていると `virbr0` が衝突する ([注意点](#注意点))。ホスト要件は [SPEC.md 2.2](SPEC.md#22-ホスト要件)、実行ユーザーの要件は [2.3](SPEC.md#23-実行ユーザーの要件)。
 
 #### 手順 2: ホストの準備
 
-- **ホスト種別の判定**: `KVM_HOST=auto` (既定) では `host/wsl.sh` の `is_wsl` が `WSL_DISTRO_NAME` か `/proc/sys/kernel/osrelease` の `microsoft` で WSL2 を判定する。`KVM_HOST=wsl` / `generic` / `headless` で上書きできる ([SPEC.md 2.1](SPEC.md#21-ホスト種別と判定))。画面の有無は `KVM_HOST` が `headless` でなく、`DISPLAY` か `WAYLAND_DISPLAY` が設定されているかで決まる (`have_display`)
-- **WSL2**: WSLg は Wayland / PulseAudio のソケットを `/mnt/wslg/runtime-dir` に置き、`/run/user/<uid>` にはそこへのシンボリックリンクがある。`XDG_RUNTIME_DIR` が未設定なら `/mnt/wslg/runtime-dir` を使う。`/dev/dri` が無いので常にソフトウェア描画。`/dev/kvm` が modprobe 後も無いときの案内は `.wslconfig` の `nestedVirtualization=true` になる
+- **ホスト種別の判定は無い**: 画面の有無だけを見る。`KVM_HOST` が `headless` でなく、`DISPLAY` か `WAYLAND_DISPLAY` が設定されていれば `kvm-gui` を起動する (`have_display`。[SPEC.md 2.1](SPEC.md#21-ディスプレイの判定-have_display))
 - **物理 GNOME**: `env | grep …` で値が入っていることを確かめるのは、`kvm.sh up` が実行ユーザーのセッション環境を `kvm-gui` に持ち込むため。SSH 越しや `sudo -i` のシェルでは `WAYLAND_DISPLAY` などが無く、`kvm-gui` は起動されない (`>> no display found`)。SELinux は Enforcing のまま (`kvm` は `--privileged`、`kvm-gui` は `label=disable`)
 - **ディスプレイ無し**: `up` は `kvm` だけを起動し、`up gui` と `viewer` は `!! no display found …` で終了する (それぞれ exit 1 / exit 2)。`KVM_HOST=headless` で画面のあるホストでも同じ挙動にできる
 - **起動前に確認されるホスト資源** (`check_host_network`): `KVM_BRIDGE` がブリッジでなければ停止、ホストに `virbr0` があれば警告 ([SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時))
@@ -291,12 +266,12 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 `kvm.sh up` は実行ユーザーのセッション環境をそのまま `kvm-gui` に持ち込む (`kvm` には渡さない)。詳細は [SPEC.md 4.4](SPEC.md#44-マウント仕様と表示の仕組み) と [6 章](SPEC.md#6-設計上の不変条件)。
 
-- `$XDG_RUNTIME_DIR` (GNOME なら `/run/user/<uid>`。WSLg では `/run/user/<uid>` の中に `/mnt/wslg/runtime-dir` へのシンボリックリンクがある) をコンテナの **`/run/host-xdg-runtime` に読み取り専用**でマウントし、Wayland ソケット・GNOME の Xwayland 認証ファイル・PipeWire/Pulse のソケットは、その中を指す**絶対パス**で **`WAYLAND_DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`** に渡す (unix ソケットへの接続は読み取り専用でも可)。シンボリックリンクの先が runtime dir の外にある場合 (WSLg の `/mnt/wslg/...`) は、そのソケットファイルだけを同じパスに読み取り専用でマウントする
+- `$XDG_RUNTIME_DIR` (GNOME なら `/run/user/<uid>`) をコンテナの **`/run/host-xdg-runtime` に読み取り専用**でマウントし、Wayland ソケット・GNOME の Xwayland 認証ファイル・PipeWire/Pulse のソケットは、その中を指す**絶対パス**で **`WAYLAND_DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`** に渡す (unix ソケットへの接続は読み取り専用でも可)。シンボリックリンクの先が runtime dir の外にある場合は、そのソケットファイルだけを同じパスに読み取り専用でマウントする
 - **ホストの runtime dir をコンテナの `/run/user/<uid>` に同じパスでマウントしてはいけない。** コンテナの logind がそのディレクトリを自分のものとして管理し、ユーザーのセッションや `systemd --user` の開始時にホストの session bus や `systemd --user` のソケットを作り直し、`user-runtime-dir@.service` の停止処理で中身をすべて削除してしまう (ホストの Wayland ソケットや session bus が消える。cockpit を載せていた頃に、そのログイン / ログアウトで実際に起きた不具合。PR #10)
 - **コンテナ内の `/run/user/<uid>` は、コンテナの logind が GUI ユーザー用に作るディレクトリ** (`kvm` では tmpfs、非特権の `kvm-gui` では tmpfs をマウントできないので `/run` 直下のディレクトリ)。`gui-user-setup` がこのユーザーを linger にしているので起動時から存在する (session bus 付き)。GUI アプリはこれを使う
 - **`/tmp/.X11-unix` は読み取り専用でマウント** (X11 フォールバック用)。読み取り専用にするのは、コンテナの systemd-tmpfiles がホストの X ソケットを削除してしまうのを防ぐため (同じ理由で **`tmpfiles.d/x11.conf` をマスク**)
 - **どちらのコンテナでも GUI ユーザーはホストユーザーの写し**: 起動時に `gui-user.service` が `kvm.sh up` を実行したホストユーザーの名前・uid/gid で作る (イメージには一般ユーザーを焼き込んでいない)。ホストの runtime dir は 0700 なので、その中のソケットに届くには uid の一致が必要。**パスワードは設定しない** (コンテナにログインするものは無く、ユーザーはロックされたまま。ホストのパスワードやハッシュはコンテナに渡さない)。値は `podman run -e` で渡し、コンテナ内では PID 1 の environ から読む
-- **WSL、または `/dev/dri` が無いホストではソフトウェア描画** (`LIBGL_ALWAYS_SOFTWARE=1`)。`/dev/dri` があれば `--device` で `kvm-gui` に渡し、`gui` が `renderD*` を 0666 にする。`KVM_SOFTWARE_GL=1` で強制できる
+- **`/dev/dri` が無いホストではソフトウェア描画** (`LIBGL_ALWAYS_SOFTWARE=1`)。`/dev/dri` があれば `--device` で `kvm-gui` に渡し、`gui` が `renderD*` を 0666 にする。`KVM_SOFTWARE_GL=1` で強制できる
 - 渡した引数のハッシュをラベル `kvm.gui-session` に記録し、次の `up` でラベルと、コンテナ内の Wayland ソケット / 認証ファイルの実在の両方を確かめる (再ログインで `/run/user/<uid>` が作り直されても、`kvm-gui` には古い runtime dir がマウントに残って中身だけ消えるため)。違えば `kvm-gui` だけ作り直す ([表示先が変わったとき](#表示先が変わったとき-再ログイン後))
 
 ##### `data/` の初期化
@@ -320,13 +295,13 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 - `systemctl is-system-running` が両コンテナで `running` (`degraded` ではない) ことは、Containerfile の unit マスク群 (`iscsid.socket` / `NetworkManager-wait-online.service` など) が効いているかの実質的な回帰テスト
 - `/run/libvirt/virtqemud-sock` が `srw-rw---- root libvirt` なのは `virtd-socket.conf` の drop-in が効いている証拠。`kvm-gui` から一般ユーザーで `virsh` が通ることが、コンテナをまたぐ libvirt 接続の回帰テスト ([選択した方針](#選択した方針))
 - `./kvm.sh logs` は `kvm` の `kvm-libvirt-conf` / `virtqemud` / `gui-user` の journal、`./kvm.sh logs gui` は `kvm-gui` の `/var/log/gui.log` と `gui-user` の journal を出す
-- 変更後の回帰確認は付録の確認手順 ([物理 GNOME](#付録-物理-almalinux-10--gnome-での確認手順) / [WSL2](#付録-windows--wsl2-での確認手順)) を手で流す。期待結果は [SPEC.md 9 章](SPEC.md#9-検証手順)
+- 変更後の回帰確認は付録の確認手順 ([物理 GNOME](#付録-物理-almalinux-10--gnome-での確認手順) / [ディスプレイ無し](#付録-ディスプレイの無いホストでの確認手順)) を手で流す。期待結果は [SPEC.md 9 章](SPEC.md#9-検証手順)
 
 #### 環境変数
 
 | 変数 | 既定 | 意味 |
 | --- | --- | --- |
-| `KVM_HOST` | `auto` | `wsl` / `generic` / `headless` で判定を上書き (判定は `host/wsl.sh`) |
+| `KVM_HOST` | `auto` | `headless` にすると、表示用環境変数があっても `kvm-gui` を起動しない (他の値は `auto` と同じ) |
 | `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 |
 | `TZ` | `Asia/Tokyo` | コンテナのタイムゾーン |
 | `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 |
@@ -367,12 +342,12 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
   - `--network host` の帰結として `iscsid.socket` / `iscsiuio.socket` / `NetworkManager*.service` をマスクし、停止時に `kvm-net-teardown.service` が `virbr0` を消す
   - `kvm` の停止では `libvirt-guests.service` が VM を先にシャットダウンし、`down` の待ち時間 (`KVM_STOP_TIMEOUT=180`) は `SHUTDOWN_TIMEOUT=120` より長くする
   - GUI ユーザーはホストユーザーの写しでパスワード無し。`data/` は空のときだけ seed
-- **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は WSL がホスト名に使うため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
+- **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は他の用途と紛れるため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
 - **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く。そのため `viewer` でも sudo のパスワードを聞かれることがある
 
 ### 参照
 
-- [SPEC.md](SPEC.md) — [1.1 目的](SPEC.md#11-目的) / [1.2 スコープ外](SPEC.md#12-スコープ外) / [2.1 ホスト種別と判定](SPEC.md#21-ホスト種別と判定) / [2.2 ホスト要件](SPEC.md#22-ホスト要件) / [2.3 実行ユーザーの要件](SPEC.md#23-実行ユーザーの要件) / [2.4 起動前に確認されるホスト資源](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) / [3.2 3 層構造とファイル](SPEC.md#32-3-層構造とファイル) / [3.3 コンテナ実行仕様](SPEC.md#33-コンテナ実行仕様-podman-run) / [3.5 コンテナ間の libvirt 接続](SPEC.md#35-コンテナ間の-libvirt-接続) / [4.1 CLI](SPEC.md#41-cli-kvmsh-サブコマンド-ロール-) / [4.2 環境変数](SPEC.md#42-環境変数-ホスト側の入力) / [4.4 マウント仕様と表示の仕組み](SPEC.md#44-マウント仕様と表示の仕組み) / [4.6 永続化データ](SPEC.md#46-永続化データ-data-と共有-run-dir) / [5.1 起動シーケンス](SPEC.md#51-起動シーケンス-kvmsh-up) / [5.2 停止シーケンス](SPEC.md#52-停止シーケンス-kvmsh-down) / [6 設計上の不変条件](SPEC.md#6-設計上の不変条件) / [7 セキュリティ考慮事項](SPEC.md#7-セキュリティ考慮事項) / [9 検証手順](SPEC.md#9-検証手順) (9.1 静的検査、9.2 物理 GNOME、9.3 WSL2) / [付録 A ファイル一覧](SPEC.md#付録-a-ファイル一覧とコンテナ内配置)
+- [SPEC.md](SPEC.md) — [1.1 目的](SPEC.md#11-目的) / [1.2 スコープ外](SPEC.md#12-スコープ外) / [2.1 ディスプレイの判定](SPEC.md#21-ディスプレイの判定-have_display) / [2.2 ホスト要件](SPEC.md#22-ホスト要件) / [2.3 実行ユーザーの要件](SPEC.md#23-実行ユーザーの要件) / [2.4 起動前に確認されるホスト資源](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) / [3.2 3 層構造とファイル](SPEC.md#32-3-層構造とファイル) / [3.3 コンテナ実行仕様](SPEC.md#33-コンテナ実行仕様-podman-run) / [3.5 コンテナ間の libvirt 接続](SPEC.md#35-コンテナ間の-libvirt-接続) / [4.1 CLI](SPEC.md#41-cli-kvmsh-サブコマンド-ロール-) / [4.2 環境変数](SPEC.md#42-環境変数-ホスト側の入力) / [4.4 マウント仕様と表示の仕組み](SPEC.md#44-マウント仕様と表示の仕組み) / [4.6 永続化データ](SPEC.md#46-永続化データ-data-と共有-run-dir) / [5.1 起動シーケンス](SPEC.md#51-起動シーケンス-kvmsh-up) / [5.2 停止シーケンス](SPEC.md#52-停止シーケンス-kvmsh-down) / [6 設計上の不変条件](SPEC.md#6-設計上の不変条件) / [7 セキュリティ考慮事項](SPEC.md#7-セキュリティ考慮事項) / [9 検証手順](SPEC.md#9-検証手順) (9.1 静的検査、9.2 物理 GNOME、9.3 ディスプレイ無し) / [付録 A ファイル一覧](SPEC.md#付録-a-ファイル一覧とコンテナ内配置)
 - [CLAUDE.md](../CLAUDE.md) — 変更時の注意点 (壊しやすい不変条件の理由、静的検査の対象ファイル)
 - `./kvm.sh` (引数なし) — サブコマンドと環境変数の一覧 (`kvm.sh` 冒頭のヘッダコメント)
 
@@ -422,25 +397,45 @@ GNOME からログアウト → 再ログイン → 端末で (手順 0 と vm.m
 ./kvm.sh down; ip link show virbr0; ls /run/kvm-container   # どちらも残っていないこと
 ```
 
-### 付録: Windows + WSL2 での確認手順
+### 付録: ディスプレイの無いホストでの確認手順
 
-1 コンテナ構成の時点 (PR #12 / #14) で確認した項目。**2 コンテナ構成以降の再実行記録は無い。** 期待結果は [SPEC.md 9.3](SPEC.md#93-windows--wsl2)。ブリッジは WSL2 では使えない ([bridge.md](bridge.md#windows--wsl2-では使えません))。VM を 1 つ作り、vm.md 手順 0 の `VM_NAME` を設定したシェルで貼る。最初のブロックは WSLg 経由で Windows デスクトップに VM の画面が出ることを確かめる (`cd "${REPO:?…}"` と `viewer` の変数形は本実行していない。ウィンドウを閉じてから次へ)。
+グラフィカルセッションの外のシェル (SSH など) から流す。期待結果は [SPEC.md 9.3](SPEC.md#93-ディスプレイ無し-headless)。
+PR #28 で AlmaLinux 10.2 (Raspberry Pi 5、aarch64、SELinux Enforcing、podman 5.8.2) に通した記録なので、そのまま貼れる形で書いてある。
+`KVM_HOST=headless` を付けているが、このシェルには `DISPLAY` / `WAYLAND_DISPLAY` が無いので、付けなくても同じ経路を通る (最後のブロックで確認する)。
 
 ```bash
-cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh up && ./kvm.sh viewer "${VM_NAME:?vm.md 手順 0 の VM_NAME を設定してから貼る}"
+cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}"
+KVM_HOST=headless ./kvm.sh up      # >> ready. のあとに >> no display found: GUI disabled ... が出ること
+```
+
+`up gui` と `viewer` は画面が無いので拒否される (終了コードはそれぞれ 1 と 2)。
+
+```bash
+KVM_HOST=headless ./kvm.sh up gui; echo "exit=$?"    # !! no display found ... the GUI container is not needed / exit=1
+KVM_HOST=headless ./kvm.sh viewer; echo "exit=$?"    # !! no display found ... manage the VMs with ./kvm.sh virsh / exit=2
 ```
 
 ```bash
-for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done   # どちらも running
-sudo podman exec kvm-gui ss -xp | grep wayland        # /mnt/wslg/runtime-dir/wayland-0 に接続していること (X11 フォールバックではない)
-sudo podman exec kvm-gui findmnt /run/user/$UID       # ホストの runtime dir ではなく、コンテナ内 /run の下であること (非特権なので tmpfs ではない)
-ls -A /run/user/$UID && systemctl --user is-system-running   # virt-viewer を開いて閉じた後も、ホスト側の一覧が変わらず running のままであること
+sudo podman exec kvm systemctl is-system-running     # running (degraded ではないこと)
+sudo podman ps                                       # kvm だけで、kvm-gui が居ないこと
+sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock          # srw-rw---- root libvirt
+sudo sh -c 'grep -h "^auth_unix_rw" data/etc-libvirt/virt*d.conf'   # すべて "none"
+sudo podman exec kvm getent shadow "$USER"           # 第 2 フィールドが ! (GUI ユーザーはロックされている)
+./kvm.sh virsh list --all                            # 一覧が出ること (VM が無ければヘッダだけ)
+ip -br addr show virbr0                              # 192.168.122.1/24
+sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<no matches>)
+```
+
+`KVM_HOST` を付けない場合も同じ経路を通り、`down` でホストに何も残らないことを確かめる。
+
+```bash
+./kvm.sh down; ./kvm.sh up                           # 同じ >> no display found ... が出て >> ready. まで進むこと
+./kvm.sh down; ip link show virbr0; ls /run/kvm-container   # どちらも残っていないこと
 ```
 
 #### 未確認事項
 
-- ディスプレイの無いホストでの通し (手順 1〜5 と `virt-install` → `virsh console`)。`KVM_HOST=headless` の分岐だけ PR #12 で WSL2 上で確認
-- 2 コンテナ構成 (PR #18 以降) での WSL2 の付録の再実行 (`ss -xp | grep wayland`、`findmnt /run/user/$UID`、ホストのセッションが無傷であること)
-- `KVM_HOST=generic` の現行構成での再確認 (PR #12 で WSL2 上は確認済み)
+- ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
+- x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの `sudo podman rmi …` と、更新の 3 項目・`git pull` からの通常更新
-- 手順 0 / 1 / 2 / 5 の新規の確認行 (`ls -l "${REPO}/kvm.sh"`、`rpm -q podman`、`wsl --version`、`./kvm.sh virsh list --all`) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`
+- 手順 0 / 1 / 5 の新規の確認行 (`ls -l "${REPO}/kvm.sh"`、`rpm -q podman`、`./kvm.sh virsh list --all`) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`

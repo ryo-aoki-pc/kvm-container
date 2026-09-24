@@ -13,7 +13,7 @@
 | [4. 動作確認する](#4-動作確認する) | `virsh list --all` / `domblklist`、ディスクファイル |
 | [5. 起動と停止と自動起動](#5-起動と停止と自動起動) | `virsh start` / `shutdown` / `domstate` / `autostart` |
 
-消すときは [VM を削除する](#vm-を削除する)。VM をホストのブリッジにつなぐ場合は [bridge.md](bridge.md) (Windows + WSL2 では[使えない](bridge.md#windows--wsl2-では使えません))。コンテナごと止める・消すのは[導入のロールバック](setup.md#ロールバック)。
+消すときは [VM を削除する](#vm-を削除する)。VM をホストのブリッジにつなぐ場合は [bridge.md](bridge.md)。コンテナごと止める・消すのは[導入のロールバック](setup.md#ロールバック)。
 
 ### 0. 変数を設定する
 
@@ -170,7 +170,7 @@ sudo ls "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す
 
 - **目的**: [導入](setup.md)済みのホストで、ISO から VM を 1 つ作り、画面をホストのデスクトップに出してインストールし、`virsh` で起動・停止・自動起動・削除ができるようにする。VM の操作はすべて `./kvm.sh virt-install` / `./kvm.sh virsh` (`kvm` コンテナ内の `virt-install` / `virsh --connect qemu:///system` の省略形)、画面は `./kvm.sh viewer` (`kvm-gui` コンテナの virt-viewer) で行う。ブラウザや Web コンソールは使わない
 - **進め方**: 手順 0 で ISO のパスと VM 名を決め、以降のコマンドはそのまま貼る。読者が書き換えるのは `ISO` だけで、VM 名・メモリ・vCPU・ディスクは既定 (旧 README の例) のままでもよい
-- **状態**: 物理 AlmaLinux 10.2 + GNOME、SELinux Enforcing で、作成 → 起動 → `viewer` → `reboot` → `shutdown` → `suspend` / `resume` → `destroy` → 稼働中の `down kvm` → `autostart` → `undefine --nvram --storage vda` の一式を通した (PR #26。[付録](#付録-vm-のライフサイクルの確認手順))。**ただしそのときの作成は `--location` + キックスタート形で、手順 2 の `--cdrom` 形は README の例を変数形に書き換えたもので、その形では再実行していない。** 手順 1・4・5 と「VM を削除する」の各行も README の例を変数形に書き換えたもので、その形では再実行していない。手順 4 の `sudo ls -l`、手順 5 の `domstate`、削除の `change-media --eject --config` は新規の確認行で本実行していない (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)。**WSL2 での実行記録は無い。** ディスプレイ無しのホストでの `virsh console` は未検証
+- **状態**: 物理 AlmaLinux 10.2 + GNOME、SELinux Enforcing で、作成 → 起動 → `viewer` → `reboot` → `shutdown` → `suspend` / `resume` → `destroy` → 稼働中の `down kvm` → `autostart` → `undefine --nvram --storage vda` の一式を通した (PR #26。[付録](#付録-vm-のライフサイクルの確認手順))。**ただしそのときの作成は `--location` + キックスタート形で、手順 2 の `--cdrom` 形は README の例を変数形に書き換えたもので、その形では再実行していない。** 手順 1・4・5 と「VM を削除する」の各行も README の例を変数形に書き換えたもので、その形では再実行していない。手順 4 の `sudo ls -l`、手順 5 の `domstate`、削除の `change-media --eject --config` は新規の確認行で本実行していない (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)。ディスプレイの無いホストでの VM の作成・操作 (`virt-install` / `virsh console`) は未検証で、そこで確認したのは `up` 〜 `down` だけ ([導入](setup.md#対象と検証環境))
 
 | 項目 | 値 |
 |---|---|
@@ -178,7 +178,6 @@ sudo ls "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す
 | 確認した内容 | VM のライフサイクル一式 ([付録](#付録-vm-のライフサイクルの確認手順)。期待結果は [SPEC.md 9.5 節](SPEC.md#95-vm-のライフサイクル)) |
 | VM の作成形 | `--location` + キックスタート (`OEMDRV` ISO)。手順 2 の `--cdrom` 形は未再実行 |
 | ゲスト OS | AlmaLinux 10.2 (boot ISO `AlmaLinux-10.2-x86_64-boot.iso`) |
-| Windows + WSL2 | 実行記録なし |
 | ディスプレイ無し | 未検証 (`viewer` が使えないことは [SPEC.md 8 章](SPEC.md#8-既知の制限事項)) |
 
 > **注記**: 環境固有の値は**シェル変数**で書いてある。[手順 0](#0-変数を設定する) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
@@ -234,7 +233,7 @@ sudo ls "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す
 
 - ディスクは `--disk size=20` で `/var/lib/libvirt/images/<VM名>.qcow2` (= `data/var-libvirt/images/`) に作られる
 - `--osinfo` に OS 名を渡す場合の候補は `./kvm.sh virt-install --osinfo list` で確認できる
-- `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。明示するなら `--network network=default` や `--network network=bridged` ([bridge.md](bridge.md))。`default` の VM が DHCP で IP を取ることは WSL2 で確認している (PR #14)。ネットワークの仕様は [SPEC.md 4.5 節](SPEC.md#45-ネットワークとポート)
+- `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。明示するなら `--network network=default` や `--network network=bridged` ([bridge.md](bridge.md))。`default` につないだ VM がネットワークに出られること (インストーラがリポジトリに届き、起動後に `domifaddr --source agent` で IP が取れること) は PR #26 のライフサイクル確認で見ている ([付録](#付録-vm-のライフサイクルの確認手順))。ネットワークの仕様は [SPEC.md 4.5 節](SPEC.md#45-ネットワークとポート)
 - `virt-install --initrd-inject` は `kvm` イメージに `cpio` が無いので使えない。キックスタートは `OEMDRV` ラベルの ISO にして渡す ([付録](#付録-vm-のライフサイクルの確認手順)、[SPEC.md 8 章](SPEC.md#8-既知の制限事項))
 - `--cdrom` の VM は、インストーラの再起動で一度 `shut off` になり、以後はディスクから起動する。インストール後の CD-ROM は空 (`domblklist` の `sda` が `-`) になる (旧 README の記述と virt-install の仕様による。実測は `--location` + キックスタート形で、`--cdrom` 形は再実行していない)
 
@@ -372,7 +371,6 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 #### 未確認事項
 
 - 手順 2 の `--cdrom` 形での通し (作成からインストール完了まで)。検証記録は `--location` + キックスタート形だけ
-- Windows + WSL2 での本書の通し (実行記録なし)
 - 「VM を削除する」の `change-media --eject --config` と、ISO の `sudo rm`
 - ディスプレイ無しのホストでの `./kvm.sh virsh console` (ISO のインストーラがシリアルに出るかも含む)
 - 手順 4・5 の変数形の行と、`sudo ls -l` / `domstate` の新規行
