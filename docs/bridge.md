@@ -2,7 +2,7 @@
 
 ## 実施手順
 
-**物理マシン / VM の AlmaLinux 10 + GNOME (NetworkManager) で、一般ユーザーのシェルから実行する** (`sudo -i` した root のシェルでは `kvm.sh` が止まる)。**Windows + WSL2 では使えない** ([注意点](#windows--wsl2-では使えません)。WSL2 では `default` (NAT) のまま使う)。手順 1 の 2 番目のブロックは NIC の接続をブリッジに切り替えるので、**その NIC 越しの ssh は切れる**。GNOME にログインした端末 (コンソール) から行う。手順 1 と手順 2 では sudo のパスワードを聞かれる。手順 0 で変数を設定したシェルで、上から順にコードブロックを貼る。理由・実測・落とし穴は[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。
+**物理マシン / VM の AlmaLinux 10 + GNOME (NetworkManager) で、一般ユーザーのシェルから実行する** (`sudo -i` した root のシェルでは `kvm.sh` が止まる)。手順 1 の 2 番目のブロックは NIC の接続をブリッジに切り替えるので、**その NIC 越しの ssh は切れる**。GNOME にログインした端末 (コンソール) から行う。手順 1 と手順 2 では sudo のパスワードを聞かれる。手順 0 で変数を設定したシェルで、上から順にコードブロックを貼る。理由・実測・落とし穴は[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。
 
 前提: [導入](setup.md) を通し、`./kvm.sh up` が動くこと。ブリッジ自体はホスト側で作る (`kvm.sh` はホストのネットワーク設定を変更しない)。**本書の nmcli 手順 (手順 1) は物理ホストで本実行していない** ([対象と検証環境](#対象と検証環境))。
 
@@ -143,14 +143,13 @@ cd "${REPO:?手順 0 の REPO が空のまま。手順 0 を貼り直す}" && ./
 
 - **目的**: VM にホストと同じセグメントの IP (LAN の DHCP) を割り当てる。`kvm` コンテナは `--network host` でホストのネットワーク名前空間を共有するので、libvirt はホスト上のブリッジに VM の tap を直接つなげる。`KVM_BRIDGE=<ブリッジ名>` を付けて `up` すると、そのブリッジが libvirt ネットワーク `bridged` (`<forward mode="bridge"/>`) として登録され、VM 作成時に選べる
 - **進め方**: ブリッジはホスト側で NetworkManager (`nmcli`) に作らせ、`kvm.sh` には `KVM_BRIDGE=` で名前だけ渡す。読者が書き換えるのは手順 0 の `NIC` だけ (ブリッジ名を `br0` 以外にするなら `BRIDGE` も)
-- **状態**: `KVM_BRIDGE` の機構 (`bridged` の登録と、`bridged` につないだ静的 IP の VM のホストからの疎通) は Windows 11 + WSL2 上のダミーブリッジ `br-test` (10.99.0.1/24) で確認した (PR #14 `7b42e14`、2026-09-06、cockpit 時代の 1 コンテナ構成。[付録](#付録-wsl2-での検証記録))。起動前のブリッジの存在確認 (`is not a bridge`) と `KVM_BRIDGE` 無しでの `bridged` の削除は `kvm.sh` の動作として README / SPEC に書かれていたが、実行した記録は無い。**手順 1 の nmcli 手順は物理ホストで本実行していない** (物理 AlmaLinux 10.2 + GNOME での通しの確認 PR #15 `ae650c0` は NIC が無線のみで `KVM_BRIDGE` を試していない)。**WSL2 の LAN へのブリッジは不可** (確認済み、同 PR)。手順 0 の `NIC_CON` の式 (`awk -F: -v d="${NIC}" '$2==d{print $1}'`)、手順 1 の nmcli 行、手順 2 の `KVM_BRIDGE="${BRIDGE}" ./kvm.sh up` は README の例を変数形に書き換えたもので、その形では再実行していない。手順 0 の読み戻し、手順 1 の `ip -br addr show` / `ls -d`、手順 2 の `./kvm.sh down kvm`、手順 3 の `net-dumpxml`、ロールバックの各ブロックは新規の確認行で本実行していない (手順 3 の `net-list` は README にあった行)
+- **状態**: **本書は通しで実行していない。** `KVM_BRIDGE` の機構 (`bridged` の登録・削除と、`bridged` につないだ VM の疎通) を現行構成で確認した記録は無く、本書の記述は `kvm.sh` の実装 (`check_host_network` / `sync_bridged_network`。[SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) / [5.6](SPEC.md#56-ブリッジ同期-sync_bridged_network)) から書いたものである。**手順 1 の nmcli 手順も物理ホストで本実行していない** (物理 AlmaLinux 10.2 + GNOME での通しの確認 PR #15 `ae650c0` は NIC が無線のみで `KVM_BRIDGE` を試していない)。手順 0 の `NIC_CON` の式 (`awk -F: -v d="${NIC}" '$2==d{print $1}'`)、手順 1 の nmcli 行、手順 2 の `KVM_BRIDGE="${BRIDGE}" ./kvm.sh up` は README の例を変数形に書き換えたもので、その形では再実行していない。手順 0 の読み戻し、手順 1 の `ip -br addr show` / `ls -d`、手順 2 の `./kvm.sh down kvm`、手順 3 の `net-dumpxml`、ロールバックの各ブロックは新規の確認行で本実行していない (手順 3 の `net-list` は README にあった行)
 
 | 項目 | 値 |
 |---|---|
-| `KVM_BRIDGE` の機構 | Windows 11 + WSL2 (ディストリは記録に無い) のダミーブリッジ `br-test` (10.99.0.1/24) で確認。PR #14 `7b42e14` (2026-09-06)、cockpit 時代の 1 コンテナ構成。現行の 2 コンテナ構成で再実行した記録は無い |
+| `KVM_BRIDGE` の機構 (`bridged` の登録・削除) | 未検証。`kvm.sh` の実装から記述した |
 | 手順 1 の nmcli 手順 | 未検証。物理 AlmaLinux 10.2 + GNOME (PR #15 `ae650c0`) は NIC が無線のみ |
-| 物理ホストのブリッジに VM をつなぎ LAN の DHCP から IP を取ること | 未検証 (ダミーブリッジでは VM に静的 IP を付けた) |
-| WSL2 の LAN (eth0 のセグメント) へのブリッジ | 不可 (確認済み、PR #14。[付録](#付録-wsl2-での検証記録)) |
+| 物理ホストのブリッジに VM をつなぎ LAN の DHCP から IP を取ること | 未検証 |
 | NetworkManager | 物理ホストの AlmaLinux 10 の既定 (`nmcli`)。版は記録していない |
 
 > **注記**: 環境固有の値は**シェル変数**で書いてある。[手順 0](#0-変数を設定する) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
@@ -182,7 +181,7 @@ cd "${REPO:?手順 0 の REPO が空のまま。手順 0 を貼り直す}" && ./
 - **ブリッジはホスト側で作り、`kvm.sh` は名前を受け取るだけ**: `kvm.sh` はホストのネットワーク設定を変更しない ([SPEC.md 1.2](SPEC.md#12-スコープ外))。コンテナ内の NetworkManager はマスクしてあり (入るとホストの NIC を管理し始める)、ブリッジを作る場所はホストしかない
 - **`--network host` の上に `<forward mode="bridge"/>`**: `kvm` コンテナがホストのネットワーク名前空間を共有するので、libvirt はホストのブリッジに VM の tap を直接つなげる。`KVM_BRIDGE` のブリッジを libvirt ネットワーク `bridged` として登録し、VM 側は `--network network=bridged` で選ぶ。定義は `data/etc-libvirt` に永続化され、`KVM_BRIDGE` を付けずに `up` すると削除される ([SPEC.md 4.5](SPEC.md#45-ネットワークとポート))
 - **IP はブリッジ側に持たせる**: 物理 NIC をブリッジのポートにし、`ipv4.method auto` でブリッジが DHCP を受ける。VM はホストと同じ LAN の DHCP から IP を受け取る
-- **`default` (NAT) はそのまま残る**: `bridged` は追加であり、`default` を置き換えない。WSL2 のようにブリッジできないホストは `default` を使う
+- **`default` (NAT) はそのまま残る**: `bridged` は追加であり、`default` を置き換えない。ブリッジを作れないホスト (無線 NIC しか無いなど) は `default` を使う
 
 ### 手順の補足
 
@@ -200,7 +199,7 @@ cd "${REPO:?手順 0 の REPO が空のまま。手順 0 を貼り直す}" && ./
 
 #### 手順 2: `bridged` の登録と `KVM_BRIDGE` の付け忘れ
 
-- `bridged` の登録は `sync_bridged_network` ([SPEC.md 5.7](SPEC.md#57-ブリッジ同期-sync_bridged_network)) が行う。これは `start_kvm` が `podman run` で `kvm` を新しく起動し、libvirt の readiness を確認した直後にしか走らない。`kvm` がすでに動いていると `start_kvm` は `>> kvm is already running` で先に戻るので (`kvm.sh` の `start_kvm` 冒頭)、`KVM_BRIDGE=` を付けて `up` しても何も起きない。そのため手順 2 は `down kvm` → `KVM_BRIDGE=… up` の 2 ブロックにしてある
+- `bridged` の登録は `sync_bridged_network` ([SPEC.md 5.6](SPEC.md#56-ブリッジ同期-sync_bridged_network)) が行う。これは `start_kvm` が `podman run` で `kvm` を新しく起動し、libvirt の readiness を確認した直後にしか走らない。`kvm` がすでに動いていると `start_kvm` は `>> kvm is already running` で先に戻るので (`kvm.sh` の `start_kvm` 冒頭)、`KVM_BRIDGE=` を付けて `up` しても何も起きない。そのため手順 2 は `down kvm` → `KVM_BRIDGE=… up` の 2 ブロックにしてある
 - 起動前に `check_host_network` が `/sys/class/net/<ブリッジ名>/bridge` の有無を確かめ、無ければ `!! KVM_BRIDGE=<ブリッジ名> is not a bridge on this host. Create it first (see docs/bridge.md)` で exit 1 する ([SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時))。手順 1 を飛ばしたときに出る
 - `sync_bridged_network` は毎回 define し直す (active なら `net-destroy` してから define → autostart → start)。`KVM_BRIDGE` の値を変えるとその値に追従する。`KVM_BRIDGE` が無いと `bridged` を `net-destroy` / `net-undefine` する。定義は `data/etc-libvirt` (`/etc/libvirt/qemu/networks/`) に永続化されるが、この削除で消える
 - `viewer` は内部で `up` を呼ぶ (`kvm` が止まっていれば起動する) ので、`kvm` が止まった状態で `KVM_BRIDGE=` 無しに `viewer` を実行すると `bridged` が削除される。`kvm` を起動し得る経路 (`up`、`up kvm`、`viewer`) には毎回 `KVM_BRIDGE=` を付ける。`up gui` は `kvm` に触らないので影響しない
@@ -214,7 +213,7 @@ cd "${REPO:?手順 0 の REPO が空のまま。手順 0 を貼り直す}" && ./
 #### 手順 4: VM の接続
 
 - `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。手順 1 のあとはホストの既定経路がブリッジ上にあるので、`--network` を省いた VM もそのブリッジに直接つながり得る (この経路は `bridged` を経由しない)。明示するなら `--network network=default` か `--network network=bridged` ([SPEC.md 8 章](SPEC.md#8-既知の制限事項))
-- `bridged` の VM は tap がブリッジのポートになり、VM 自身の MAC で LAN に出る。WSL2 で通信できないのはこのため ([注意点](#windows--wsl2-では使えません))
+- `bridged` の VM は tap がブリッジのポートになり、VM 自身の MAC で LAN に出る。仮想スイッチが MAC アドレスの詐称を許さない環境では、この形は通信できない
 
 ### 完了時点の状態
 
@@ -223,19 +222,9 @@ cd "${REPO:?手順 0 の REPO が空のまま。手順 0 を貼り直す}" && ./
 - ホスト: `nmcli connection show` に `<ブリッジ名>` (bridge) と `bridge-slave-<NIC>` (ethernet) があり、NIC の元の接続は inactive。`ip -br addr` で LAN の IP はブリッジに付き、NIC は IP を持たない。`/sys/class/net/<ブリッジ名>/bridge` がある
 - libvirt (`./kvm.sh virsh net-list --all`): `default` と `bridged` がともに active / autostart。`bridged` の定義は `data/etc-libvirt/qemu/networks/bridged.xml` に永続化される
 - `kvm.sh`: `KVM_BRIDGE=<ブリッジ名>` を付けた `up` / `viewer` で `>> libvirt network "bridged" -> host bridge <ブリッジ名> ...` が出る。付けないと `>> KVM_BRIDGE is not set: removing the libvirt network "bridged"` で消える
-- VM: `--network network=bridged` で作った VM は LAN の DHCP から IP を取り、ホストの隣接テーブルには VM 自身の MAC が載る (WSL2 のダミーブリッジでは静的 IP で確認。[付録](#付録-wsl2-での検証記録))
+- VM: `--network network=bridged` で作った VM は LAN の DHCP から IP を取り、ホストの隣接テーブルには VM 自身の MAC が載る (いずれも未検証)
 
 ### 注意点
-
-#### Windows + WSL2 では使えません
-
-WSL2 の Hyper-V 仮想スイッチは、WSL の仮想 NIC 以外の MAC アドレスから送られたフレームを破棄します (MAC アドレススプーフィング不可)。
-検証: eth0 上に別 MAC の macvlan を作って別の名前空間に置くと、Windows からの ARP 要求は届くのに応答が Windows に届かず、
-ゲートウェイ (172.25.32.1) への ARP も失敗しました。ブリッジや macvtap で VM 自身の MAC を使う構成は WSL2 では通信できないため、
-WSL2 では従来どおり `default` (NAT, 192.168.122.0/24) を使ってください。なお、WSL の eth0 のセグメント自体が Windows 側の
-NAT (172.25.x.x など) で、物理 LAN には L2 で到達できません。
-
-(README にあった文をそのまま残している。検証の記録は[付録](#付録-wsl2-での検証記録)。`kvm.sh` の機構そのものは WSL2 のダミーブリッジで動いたので、WSL2 で `KVM_BRIDGE` を付けてもエラーにはならない想定だが (ダミーブリッジでしか試していない)、LAN には届かない)
 
 #### 毎回 `KVM_BRIDGE=` を付ける
 
@@ -256,40 +245,23 @@ Wi-Fi の NIC は (4 アドレス形式などの例外を除き) 自分以外の
 
 ### 参照
 
-- [SPEC.md 1.2 スコープ外](SPEC.md#12-スコープ外) — WSL2 のブリッジとホストのネットワーク設定が対象外である理由
+- [SPEC.md 1.2 スコープ外](SPEC.md#12-スコープ外) — ホストのネットワーク設定の変更が対象外である理由
 - [SPEC.md 2.4 起動前に確認されるホスト資源](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) — `check_host_network` のブリッジ確認と `virbr0` の警告
 - [SPEC.md 4.2 環境変数](SPEC.md#42-環境変数-ホスト側の入力) — `KVM_BRIDGE` を読む場所
 - [SPEC.md 4.5 ネットワークとポート](SPEC.md#45-ネットワークとポート) — `default` / `bridged` と `--network host` の図
-- [SPEC.md 5.7 ブリッジ同期](SPEC.md#57-ブリッジ同期-sync_bridged_network) — `sync_bridged_network` のフロー
-- [SPEC.md 8 章 既知の制限事項](SPEC.md#8-既知の制限事項) — WSL2 でブリッジ不可、`virt-install` の既定ネットワーク
+- [SPEC.md 5.6 ブリッジ同期](SPEC.md#56-ブリッジ同期-sync_bridged_network) — `sync_bridged_network` のフロー
+- [SPEC.md 8 章 既知の制限事項](SPEC.md#8-既知の制限事項) — `virt-install` の既定ネットワーク
 - [SPEC.md 9.4 その他の確認点](SPEC.md#94-その他の確認点-変更内容に応じて) — `KVM_BRIDGE` 周りを変えたときの確認
 - [setup.md](setup.md) の[環境変数](setup.md#環境変数)と[注意点](setup.md#注意点)、[vm.md](vm.md) の[手順 2](vm.md#2-vm-を作る)
 - `man nmcli` / `man nm-settings-nmcli` (`bridge`、`bridge-slave`、`ipv4.method`) / `man virsh` (`net-list`、`net-dumpxml`、`net-undefine`) / `man virt-install` (`--network`)
 
----
-
-### 付録: WSL2 での検証記録
-
-PR #14 `7b42e14` (2026-09-06) で `--network host` と `KVM_BRIDGE` を入れたときの記録 (コミット本文と当時の README から)。ホストは Windows 11 + WSL2 (ディストリは記録に無い)、当時は cockpit を載せた 1 コンテナ構成で、現行の 2 コンテナ構成での再実行記録は無い。cockpit の listen に関する項目は現行構成に無いので省く。
-
-| 確認項目 | 結果 |
-|---|---|
-| ネットワーク名前空間 | コンテナがホストの `eth0` / `virbr0` を共有している |
-| コンテナ内の NetworkManager | masked |
-| `default` (NAT) の VM | DHCP で 192.168.122.x を取得 |
-| `./kvm.sh down` | ホストから `virbr0` が消える |
-| ダミーブリッジ `br-test` (10.99.0.1/24) を `KVM_BRIDGE` に指定 | `bridged` が登録され、静的 IP 10.99.0.2 の VM を `bridged` で起動するとホストから疎通した。ホストの隣接テーブルには VM 自身の MAC が載った (= フレームは VM の MAC でブリッジに出ている) |
-| `eth0` 上に別 MAC の macvlan を作り、別の名前空間に置く | Windows からの ARP 要求は届くが、応答が Windows に届かない。ゲートウェイ 172.25.32.1 への ARP も失敗 |
-
-結論: WSL2 の Hyper-V 仮想スイッチは WSL の vNIC 以外の MAC からのフレームを破棄する。`kvm.sh` の `KVM_BRIDGE` の機構自体は WSL2 上でも動く (ダミーブリッジ内では VM と疎通する) が、WSL の `eth0` のセグメントへブリッジや macvtap で VM 自身の MAC を出す構成は通信できない。しかも `eth0` のセグメントは Windows 側の NAT (172.25.x.x など) で物理 LAN に L2 で到達できないので、WSL2 では `default` (NAT) を使う。
-
-#### 未確認事項
+### 未確認事項
 
 - 手順 1 の nmcli 手順 (物理ホスト、有線 NIC) の本実行。ブリッジが DHCP で NIC と同じ IP を引き継ぐか、ブリッジを上げたあとの ssh の復帰
 - 手順 0 の `NIC_CON` の式 (`awk -v d="${NIC}"` 形) と、手順 1・2 の変数形の行
 - 手順 3 の `net-dumpxml bridged` の実際の出力
-- 物理ホストのブリッジに `--network network=bridged` でつないだ VM が LAN の DHCP から IP を取ること (WSL2 のダミーブリッジでは静的 IP で確認)
-- 現行の 2 コンテナ構成で `KVM_BRIDGE` を再実行すること (記録は 1 コンテナ構成のもの)
+- 物理ホストのブリッジに `--network network=bridged` でつないだ VM が LAN の DHCP から IP を取ること
+- `KVM_BRIDGE` を付けた `up` で `bridged` が登録されること、`KVM_BRIDGE` 無しの `up` で削除されること (実行記録なし)
 - `bridged` につないだ VM が定義されたまま `KVM_BRIDGE` 無しで `up` したときの挙動 (`bridged` の削除が失敗するか、VM の起動が失敗するか)
 - ロールバックの nmcli (`connection delete` と元の接続の `up`) と、`KVM_BRIDGE` 無しの `up` で `bridged` が消えるところ (README には書かれていたが本書の形では再実行していない)
 - `export KVM_BRIDGE=br0` にしたときの `viewer` / `up` の挙動

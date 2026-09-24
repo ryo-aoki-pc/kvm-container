@@ -4,7 +4,7 @@
 
 **GNOME にログインした端末で、`sudo` を付けずに一般ユーザーとして実行する** (`install-desktop` は root だと `!! run this without sudo` で止まる)。前提は[導入](setup.md)を通してあること。`gui` イメージは先に作っておかなくてよい。無ければ手順 2 の `install-desktop` が自分でビルドする (時間がかかる)。手順 2・3 は内部で `sudo podman` を呼ぶので、sudo のタイムスタンプが切れていればパスワードを聞かれる (答えてから続きを貼る)。手順 3 の動作確認にはコンテナの起動が要る。手順 0 で変数を設定したシェルで、上から順にコードブロックを貼る。理由・実測・落とし穴は[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。
 
-できあがると、GNOME のアクティビティで「Virt Viewer」を検索し、クリックで起動できる (ホストに直接入れたアプリと同じ使い勝手。デスクトップにアイコンは置かない)。起動すると VM を一覧から選ぶダイアログが出る。WSLg (Windows のスタートメニュー) は未検証。
+できあがると、GNOME のアクティビティで「Virt Viewer」を検索し、クリックで起動できる (ホストに直接入れたアプリと同じ使い勝手。デスクトップにアイコンは置かない)。起動すると VM を一覧から選ぶダイアログが出る。
 
 | 手順 | 内容 |
 |---|---|
@@ -101,14 +101,13 @@ cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}" &&
 
 - **目的**: 物理マシン / VM の AlmaLinux 10 + GNOME で、`./kvm.sh viewer` を端末から打つ代わりに、アクティビティ (アプリ一覧) の「Virt Viewer」から VM の画面を開けるようにする。ランチャーは `~/.local/share/applications/` に置く `.desktop` ファイル 1 つとアイコンだけで、ホストにパッケージは入れない
 - **進め方**: NOPASSWD の `sudo podman` を確かめ、`./kvm.sh install-desktop` で配置し、`./kvm.sh up` してからアクティビティで起動する。読者が書き換えるのは手順 0 の `REPO` だけ (既定でよければそのまま)
-- **状態**: 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は PR #15 で物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通した。**ただしそのときのランチャーは旧 firefox / virt-manager のもので、現行の Virt Viewer エントリ (PR #25 で置き換え) を本実行した記録は無い。** 手順 1 の `sudo -k; sudo -n podman ps` と手順 3 の `grep` / `ls` は新規の確認行で本実行していない。手順 2 とロールバックの `cd "${REPO:?…}" && ./kvm.sh …` は README の例を変数形に書き換えたもので、その形では再実行していない。**WSLg のスタートメニューへの反映は未検証**
+- **状態**: 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は PR #15 で物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通した。**ただしそのときのランチャーは旧 firefox / virt-manager のもので、現行の Virt Viewer エントリ (PR #25 で置き換え) を本実行した記録は無い。** 手順 1 の `sudo -k; sudo -n podman ps` と手順 3 の `grep` / `ls` は新規の確認行で本実行していない。手順 2 とロールバックの `cd "${REPO:?…}" && ./kvm.sh …` は README の例を変数形に書き換えたもので、その形では再実行していない
 
 | 項目 | 値 |
 |---|---|
 | 検証ホスト | 物理 AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD (PR #15) |
 | 確認した内容 | `install-desktop` → アクティビティからの起動 (`launch`) → `uninstall-desktop` の一巡 (旧 firefox / virt-manager ランチャー) |
 | 現行 Virt Viewer エントリ | 本実行記録なし (PR #25 は静的検査のみ) |
-| Windows + WSL2 (WSLg) | 未検証 |
 | ディスプレイ無し | 対象外 (アクティビティが無い) |
 
 > **注記**: 環境固有の値は**シェル変数**で書いてある。[手順 0](#0-変数を設定する) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
@@ -186,7 +185,6 @@ cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}" &&
 - **NOPASSWD の意味**: `launch` のために podman を NOPASSWD にすると、そのユーザーはパスワード無しでホスト root 相当の操作ができる。通常の `./kvm.sh` は対話的な `sudo` のままで動くので、アクティビティからの起動を使わないなら設定しなくてよい ([SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
 - **リポジトリを移動したら再実行**: `.desktop` は絶対パス。`TryExec` により古いパスのエントリは自動で非表示になるだけで、直るわけではない。`./kvm.sh install-desktop` を再実行する
 - **コンテナが起動していないと通知だけ出る**: `launch` は `up` を経由しない。再ログイン後に表示先が変わったときも同じで、先に端末から `./kvm.sh up` する ([導入の「表示先が変わったとき」](setup.md#表示先が変わったとき-再ログイン後))
-- **WSLg は未検証**: WSLg は `~/.local/share/applications` の `.desktop` を Windows のスタートメニューに反映するが、このランチャーで試していない
 - **`./kvm.sh viewer` はそのまま使える**: ランチャーを入れても端末からの `./kvm.sh viewer` は変わらない。こちらは `up` を経由するので、コンテナが止まっていても再ログイン後でもそのまま使える
 
 ### 参照
@@ -207,7 +205,6 @@ cd "${REPO:?手順 0 の REPO が空のまま。値を入れて貼り直す}" &&
 #### 未確認事項
 
 - 現行の Virt Viewer エントリで `install-desktop` → アクティビティから起動 → 選択ダイアログ → `uninstall-desktop` を通すこと
-- WSLg (Windows のスタートメニュー) への反映と、そこからの起動
 - 手順 1 の `sudo -k; sudo -n podman ps` と手順 3 の `grep` / `ls` (新規の確認行)
 - sudoers の具体的な書き方と、それで `launch` が通ること
 - 旧エントリ (`kvm-firefox.desktop` / `kvm-virt-manager.desktop`) が残ったホストでの `install-desktop` による削除

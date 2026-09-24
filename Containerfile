@@ -1,7 +1,7 @@
 # Images for the qemu-kvm/libvirt setup under systemd (AlmaLinux 10 minimal). One multi-stage file, two targets:
 #   kvm  (podman build --target kvm)  libvirt + qemu-kvm + virt-install: the server. Runs --privileged --network host as
 #                                     container "kvm". The VMs are managed from the command line (kvm.sh virsh / virt-install)
-#   gui  (podman build --target gui)  virt-viewer: the desktop client shown on the host session (WSLg / GNOME Wayland).
+#   gui  (podman build --target gui)  virt-viewer: the desktop client shown on the host session (GNOME Wayland).
 #                                     Runs unprivileged as container "kvm-gui", only on hosts with a display
 # Both reach libvirt through /run/libvirt, a host directory kvm.sh shares between the containers (see the libvirt group below).
 # The minimal base ships microdnf instead of dnf (--setopt=install_weak_deps takes 0/1, not False/True)
