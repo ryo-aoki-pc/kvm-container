@@ -14,14 +14,14 @@
 目次
 
 1. [概要](#1-概要)
-2. [対応環境・前提条件](#2-対応環境前提条件)
-3. [システム構成](#3-システム構成)
-4. [外部インターフェース仕様](#4-外部インターフェース仕様)
-5. [内部仕様 (処理シーケンス)](#5-内部仕様-処理シーケンス)
-6. [設計上の不変条件](#6-設計上の不変条件)
-7. [セキュリティ考慮事項](#7-セキュリティ考慮事項)
-8. [既知の制限事項](#8-既知の制限事項)
-9. [検証手順](#9-検証手順)
+1. [対応環境・前提条件](#2-対応環境前提条件)
+1. [システム構成](#3-システム構成)
+1. [外部インターフェース仕様](#4-外部インターフェース仕様)
+1. [内部仕様 (処理シーケンス)](#5-内部仕様-処理シーケンス)
+1. [設計上の不変条件](#6-設計上の不変条件)
+1. [セキュリティ考慮事項](#7-セキュリティ考慮事項)
+1. [既知の制限事項](#8-既知の制限事項)
+1. [検証手順](#9-検証手順)
 - [付録 A. ファイル一覧とコンテナ内配置](#付録-a-ファイル一覧とコンテナ内配置)
 - [付録 B. 主要な変更履歴](#付録-b-主要な変更履歴)
 
@@ -129,7 +129,7 @@ WSL 判定はフックの上書きだけを決め、GUI の有無は `KVM_HOST=h
 | podman | root で利用 (`sudo podman`)。`kvm.sh` のすべての podman 操作は `PODMAN="sudo podman"` 経由 | `kvm.sh` |
 | KVM | CPU 仮想化 (AMD SVM / Intel VT-x)。WSL2 は Windows 側のネストした仮想化。`/dev/kvm` が無ければ `modprobe kvm_amd` (`/proc/cpuinfo` に `AuthenticAMD`) または `kvm_intel` を試み、それでも無ければ `host_kvm_missing_hint` を出して exit 1 | `ensure_kvm` (`start_kvm` から) |
 | `modprobe` | `/dev/kvm` が無いときに必要。無ければ `!! modprobe not found: sudo dnf install kmod` で exit 1 | `ensure_kvm` |
-| WSL | 2.5.1 以降 (cgroup v2 が既定)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く) | docs/setup.md 手順 2 |
+| WSL | 2.5.1 以降 (cgroup v2 が既定)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く) | docs/setup.md 手順 3 |
 | デスクトップセッション (GUI を使う場合) | GNOME にログインした端末から実行する。`XDG_RUNTIME_DIR` (WSL では未設定でも可) が実在しなければ `!! XDG_RUNTIME_DIR (...) does not exist. Run this from a terminal inside a desktop session` で exit 1 | `gui_args` |
 | GPU (任意) | `/dev/dri` があれば `--device /dev/dri` で `kvm-gui` に渡す。無ければソフトウェア描画 | `gui_args` |
 | SELinux | Enforcing のままで可。`kvm` は `--privileged`、`kvm-gui` と seed 用コンテナは `--security-opt label=disable` で、いずれもラベル分離無し | `start_kvm` / `start_gui` / `prepare_data_dir` |
