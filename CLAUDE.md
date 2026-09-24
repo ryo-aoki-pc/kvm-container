@@ -27,7 +27,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 ```
 
 検証は自動化されていない。変更後は `docs/setup.md` の付録「確認手順」(物理 AlmaLinux 10 GNOME / ディスプレイ無し) と
-`docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 5。
+`docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 6。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
 `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` はコンテナをまたぐ libvirt 接続の回帰テスト。
@@ -41,20 +41,23 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 3 層に分かれており、どの層を触るかで影響範囲が変わる。現状実装の仕様書 (図付き) は `docs/SPEC.md`。
 
 ドキュメントの構成: `README.md` は手順書の一覧 (用途 / 検証環境) と記法だけ。手順は `docs/setup.md` (導入。他 3 本の前提) / `docs/vm.md` /
-`docs/desktop.md` / `docs/bridge.md`。各手順書は setup-notes と同じ骨格 (`## 実施手順` → 手順 0 の変数ブロック (必須は 1 変数 1 ブロック、
-任意は 1 ブロック、`${VAR:?}` で空を止める、bash ブロックに `<...>` を置かない) → 任意節 → `## ロールバック` → `## 補足`: 対象と検証環境 /
-実施前の状態 / 選択した方針 / 手順の補足 / 完了時点の状態 / 注意点 / 参照 / 付録)。説明が `docs/SPEC.md` にある事項は節番号で参照する。
+`docs/desktop.md` / `docs/bridge.md`。各手順書は setup-notes と同じ骨格 (`## 実施手順` → 任意節 → `## ロールバック` → `## 補足`: 対象と検証環境 /
+実施前の状態 / 選択した方針 / 任意節の補足や複数の手順にまたがる説明 (`docs/setup.md` の「環境変数」、`docs/vm.md` の「VM を削除するときの注意」) /
+完了時点の状態 / 注意点 / 参照 / 付録)。手順は `## 実施手順` の中の番号付きリスト (マーカーはすべて `1.`、
+項目の 1 行目は太字、番号付き見出しは使わない) で、手順 1 が変数ブロック (必須は 1 変数 1 ブロック、任意は 1 ブロック、`${VAR:?}` で空を止める、
+bash ブロックに `<...>` を置かない)。手順ごとの補足は各項目の末尾の `<details><summary>補足: …</summary>` に折り畳む。
+説明が `docs/SPEC.md` にある事項は節番号で参照する。
 検証していないことを「動く」と書かず、検証範囲が変わったら手順書の「対象と検証環境」の状態行と `README.md` の一覧を更新する。
 `kvm.sh` の実行時メッセージを `docs/SPEC.md` が引用している箇所 (2.4 節) は原文のまま揃える。
 
 1. **ホスト側 (`kvm.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
    引数 (`GUI_ARGS`) と、ホストユーザーの名前・uid/gid (`HOST_ARGS`) に変換する。
-2. **イメージ (`Containerfile`)** — AlmaLinux 10 minimal + `microdnf` のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、
+1. **イメージ (`Containerfile`)** — AlmaLinux 10 minimal + `microdnf` のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、
    両コンテナ共通のマスク) → `common` (`gui-user.service` = GUI ユーザーの起動時作成) → `kvm` / `gui` (`podman build --target`)。
    パッケージは「依存で入らないものだけ」を、それが来るステージに列挙する方針 (コメントに依存関係の理由が書いてある)。
    unit の enable / mask もここ。
-3. **コンテナ内 (`container/`)** — 起動時に自分を環境に合わせる部分。ロールごとのディレクトリに分かれる:
+1. **コンテナ内 (`container/`)** — 起動時に自分を環境に合わせる部分。ロールごとのディレクトリに分かれる:
    `common/` は `gui-user-setup` (GUI ユーザーの作成、両イメージ)、`kvm/` は `kvm-perms.service` (デバイス権限)、
    `kvm-libvirt-conf.service` + `libvirt-conf` (`/etc/libvirt` の設定)、`virtd-socket.conf` (ソケット権限の drop-in)、
    `kvm-net-teardown.service` (終了処理)、`libvirt-guests` (停止時の VM シャットダウン設定)、`gui/` は `gui` (GUI アプリ起動)。
