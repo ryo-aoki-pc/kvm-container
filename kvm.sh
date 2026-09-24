@@ -2,7 +2,7 @@
 # Helper script for the qemu-kvm/libvirt containers (AlmaLinux 10): "kvm" runs libvirt + qemu-kvm + virt-install
 # (privileged), "kvm-gui" runs virt-viewer on the host display (unprivileged, only with a display). The VMs are managed
 # from the command line (virsh / virt-install) and their screens are shown with virt-viewer
-# Supported hosts: Windows + WSL2 (WSLg) / physical AlmaLinux 10 + GNOME (Wayland) / headless (kvm only, no screen)
+# Supported hosts: physical or virtual AlmaLinux 10 + GNOME (Wayland) / headless (kvm only, no screen)
 #   ./kvm.sh build [kvm|gui]  build the images (both by default; extra arguments go to podman build)
 #   ./kvm.sh up [kvm|gui]     start the containers (kvm, plus kvm-gui when there is a display). After a host re-login,
 #                             up recreates kvm-gui only (VMs keep running)
@@ -18,16 +18,14 @@
 #   ./kvm.sh uninstall-desktop  remove the above
 #   ./kvm.sh launch <app>     used by the .desktop entry (virt-viewer): runs via sudo -n, reports failures as desktop notifications
 # Environment variables:
-#   KVM_HOST=auto|wsl|generic|headless  override host type detection
+#   KVM_HOST=auto|headless  headless skips the GUI container even when a display is detected
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see docs/bridge.md)
 #   KVM_SOFTWARE_GL=1       force software rendering
-# WSL2-specific behaviour (detection, WSLg runtime dir, /dev/kvm hint, software rendering) lives in host/wsl.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# two images (targets of the multi-stage Containerfile) and two containers. Names are fixed; the variable is not NAME
-# because WSL uses NAME for the hostname
+# two images (targets of the multi-stage Containerfile) and two containers. The names are fixed
 KVM_IMAGE=localhost/kvm-container/kvm:latest   # libvirt + qemu-kvm + virt-install
 GUI_IMAGE=localhost/kvm-container/gui:latest   # virt-viewer
 KVM_CONTAINER=kvm
@@ -46,14 +44,6 @@ HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mou
 DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
 DESKTOP_APPS="virt-viewer"             # apps that get a .desktop entry (subcommand names of container/gui/gui)
 
-# host-specific behaviour: generic defaults here; host/wsl.sh overrides them when running on WSL2
-host_kvm_missing_hint() {   # /dev/kvm is still missing after modprobe
-  echo "!! /dev/kvm not found. Enable SVM (AMD) / VT-x (Intel) in the firmware and check sudo modprobe kvm_amd or kvm_intel" >&2
-}
-host_default_runtime_dir() { :; }   # runtime dir to use when XDG_RUNTIME_DIR is not set (none by default)
-host_force_software_gl() { [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; }   # no GPU, or forced by the user
-. "$PWD/host/wsl.sh"
-
 # print the role given as the first argument of a subcommand (kvm|gui), nothing when it is not one
 role_arg() { case "${1:-}" in kvm|gui) echo "$1" ;; esac; }
 image_of() { case "$1" in kvm) echo "$KVM_IMAGE" ;; gui) echo "$GUI_IMAGE" ;; esac; }
@@ -68,7 +58,7 @@ ensure_kvm() {
     if grep -q AuthenticAMD /proc/cpuinfo; then sudo modprobe kvm_amd; else sudo modprobe kvm_intel; fi
   fi
   if [ ! -e /dev/kvm ]; then
-    host_kvm_missing_hint
+    echo "!! /dev/kvm not found. Enable SVM (AMD) / VT-x (Intel) in the firmware and check sudo modprobe kvm_amd or kvm_intel" >&2
     exit 1
   fi
   sudo chmod 666 /dev/kvm
@@ -108,9 +98,8 @@ add_ro_mount() {
 }
 
 # print the path under which a file/socket of the host session is reachable inside the container.
-# A relative path is taken relative to the host runtime dir, symlinks are resolved first (WSLg links
-# /run/user/<uid>/wayland-0 to /mnt/wslg/runtime-dir/wayland-0). Targets inside the host runtime dir map to
-# HOST_RUNTIME_DIR (returns 0); anything else is printed as-is and returns 1 so that the caller mounts it
+# A relative path is taken relative to the host runtime dir and symlinks are resolved first. Targets inside the host
+# runtime dir map to HOST_RUNTIME_DIR (returns 0); anything else is printed as-is and returns 1 so that the caller mounts it
 map_rt_path() {
   local p=$1 real
   case "$p" in /*) ;; *) p=$HOST_RT/$p ;; esac
@@ -123,7 +112,7 @@ map_rt_path() {
 
 gui_args() {   # the caller has checked have_display
   local wl x11 xauth pulse ppath
-  HOST_RT=${XDG_RUNTIME_DIR:-$(host_default_runtime_dir)}
+  HOST_RT=${XDG_RUNTIME_DIR:-}
   if [ ! -d "$HOST_RT" ]; then
     echo "!! XDG_RUNTIME_DIR ($HOST_RT) does not exist. Run this from a terminal inside a desktop session" >&2
     exit 1
@@ -164,9 +153,10 @@ gui_args() {   # the caller has checked have_display
             fi ;;
   esac
   if [ -n "$pulse" ]; then GUI_ARGS+=(-e "PULSE_SERVER=$pulse"); fi
-  # the GPU's render nodes (none on WSL, which has no /dev/dri); the container is not privileged, so pass them explicitly
+  # the GPU's render nodes; the container is not privileged, so pass them explicitly
   [ ! -d /dev/dri ] || GUI_ARGS+=(--device /dev/dri)
-  if host_force_software_gl; then
+  # no GPU on the host, or forced by the user
+  if [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; then
     GUI_ARGS+=(-e LIBGL_ALWAYS_SOFTWARE=1)
   fi
 }

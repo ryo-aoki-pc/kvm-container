@@ -1,7 +1,7 @@
 # qemu-kvm コンテナ (AlmaLinux 10)
 
 qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サーバ、`kvm-gui` = デスクトップ側) に収め、
-qemu も libvirt も入れていない軽量なホストで VM を動かして、その画面をホストのデスクトップ (GNOME Wayland / WSLg) に表示する。
+qemu も libvirt も入れていない軽量なホストで VM を動かして、その画面をホストのデスクトップ (GNOME Wayland) に表示する。
 VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.sh virsh`)、画面は virt-viewer (`./kvm.sh viewer`)。ブラウザや Web コンソールは使わない。
 各手順書は実施手順を番号付きリストで先に載せ、手順ごとの理由・実測・落とし穴はその手順の末尾に折り畳み、全体に関わる背景・実測・落とし穴を後半の「補足」に、変更後に手で流す確認手順を「付録」に載せている。
 実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [docs/SPEC.md](docs/SPEC.md)、変更時の注意は [CLAUDE.md](CLAUDE.md)。
@@ -10,10 +10,10 @@ VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.
 
 | 手順書 | 用途 | 検証環境 |
 |---|---|---|
-| [導入](docs/setup.md) | podman だけのホストにイメージをビルドしてコンテナを起動する (以降 3 本の前提)。`./kvm.sh` の使い方、旧版からの更新、ロールバックもここ | 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) / Windows 11 + WSL2 (WSLg。2 コンテナ構成以降の実行記録は無し)。ディスプレイの無いホストは未検証 |
-| [VM の作成と操作](docs/vm.md) | `virt-install` で VM を作り、virt-viewer で画面を見て、`virsh` で起動・停止・自動起動・削除する | 物理 AlmaLinux 10.2 + GNOME (作成〜削除のライフサイクルまで。手順 3 の `--cdrom` 形は未再実行)。WSL2 での実行記録は無し |
-| [アクティビティから起動する](docs/desktop.md) | GNOME のアプリ一覧に「Virt Viewer」を置く (`install-desktop`) | 物理 AlmaLinux 10.2 + GNOME (仕組みは旧ランチャーで確認。現行の Virt Viewer エントリの本実行記録は無し)。WSLg のスタートメニューは未検証 |
-| [ブリッジ](docs/bridge.md) | VM にホストと同じセグメントの IP を割り当てる (`KVM_BRIDGE`、NetworkManager のブリッジ) | `KVM_BRIDGE` の機構は WSL2 のダミーブリッジで確認。物理ホストの nmcli 手順は未検証。WSL2 の LAN へのブリッジは不可 (確認済み) |
+| [導入](docs/setup.md) | podman だけのホストにイメージをビルドしてコンテナを起動する (以降 3 本の前提)。`./kvm.sh` の使い方、旧版からの更新、ロールバックもここ | 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) / AlmaLinux 10.2 のディスプレイ無しホスト (Raspberry Pi 5、aarch64。`up` 〜 `down` を通し確認、VM の作成は未実施) |
+| [VM の作成と操作](docs/vm.md) | `virt-install` で VM を作り、virt-viewer で画面を見て、`virsh` で起動・停止・自動起動・削除する | 物理 AlmaLinux 10.2 + GNOME (作成〜削除のライフサイクルまで。手順 3 の `--cdrom` 形は未再実行)。ディスプレイの無いホストでの VM 操作は未検証 |
+| [アクティビティから起動する](docs/desktop.md) | GNOME のアプリ一覧に「Virt Viewer」を置く (`install-desktop`) | 物理 AlmaLinux 10.2 + GNOME (仕組みは旧ランチャーで確認。現行の Virt Viewer エントリの本実行記録は無し) |
+| [ブリッジ](docs/bridge.md) | VM にホストと同じセグメントの IP を割り当てる (`KVM_BRIDGE`、NetworkManager のブリッジ) | 未検証 (`KVM_BRIDGE` の機構・nmcli 手順とも実行記録なし。本文は `kvm.sh` の実装からの記述) |
 
 ## 記法
 
@@ -25,6 +25,6 @@ VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.
 - 複数の手順書が共有する前提 (podman、イメージのビルド、`up`) は[導入](docs/setup.md)にだけ書き、各手順書の冒頭から参照する
 - 説明が [docs/SPEC.md](docs/SPEC.md) にある事項は手順書で繰り返さず、節番号で参照する
 - コマンドは実行済みのものを載せ、変数形に書き換えた行や本実行していない行はそのことを明記する。一覧の検証環境も、記録のあるホストだけを書く
-- 変更後の回帰確認は各手順書の付録を手で流す (導入 = 物理 GNOME / WSL2、VM = ライフサイクル)。期待結果の表は [docs/SPEC.md 9 章](docs/SPEC.md#9-検証手順)
+- 変更後の回帰確認は各手順書の付録を手で流す (導入 = 物理 GNOME / ディスプレイ無し、VM = ライフサイクル)。期待結果の表は [docs/SPEC.md 9 章](docs/SPEC.md#9-検証手順)
 - ドキュメントとコミットメッセージは日本語、コード内のコメントと `kvm.sh` の実行時メッセージは英語
 - パスワード、鍵、トークンなどの秘密情報は残さない (コンテナにはホストのパスワードもハッシュも渡していない)

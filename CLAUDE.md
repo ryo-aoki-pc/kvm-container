@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## このリポジトリについて
 
 qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (podman, root) に収め、軽量なホストで VM を動かして
-その画面をホストのデスクトップ (WSLg / GNOME Wayland) に表示するためのもの。VM の作成・操作はコマンドライン
+その画面をホストのデスクトップ (GNOME Wayland) に表示するためのもの。VM の作成・操作はコマンドライン
 (`./kvm.sh virt-install` / `./kvm.sh virsh`)、画面は `./kvm.sh viewer` (virt-viewer)。ブラウザや Web コンソールは使わない。
 `kvm` (libvirt + qemu-kvm + virt-install、`--privileged --network host`) がサーバ、`kvm-gui` (virt-viewer、非特権、
 ディスプレイのあるホストだけ) がデスクトップクライアントで、`kvm-gui` は共有した `/run/libvirt` のソケット経由で `kvm` の libvirt に接続する。
@@ -22,18 +22,18 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (podman, root
 ./kvm.sh virt-install ... # virt-install --connect qemu:///system (kvm コンテナ)。VM の作成
 ./kvm.sh virsh list       # virsh -c qemu:///system (kvm コンテナ)
 ./kvm.sh viewer [VM]      # virt-viewer (kvm-gui コンテナ、ホストの画面)。VM 名を省くと一覧から選ぶダイアログ
-KVM_HOST=headless ./kvm.sh up      # ホスト種別判定の上書き (auto|wsl|generic|headless)
+KVM_HOST=headless ./kvm.sh up      # 画面があっても GUI コンテナを起動しない (auto|headless)
 KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネットワーク "bridged" として登録
 ```
 
-検証は自動化されていない。変更後は `docs/setup.md` の付録「確認手順」(物理 AlmaLinux 10 GNOME / Windows + WSL2) と
+検証は自動化されていない。変更後は `docs/setup.md` の付録「確認手順」(物理 AlmaLinux 10 GNOME / ディスプレイ無し) と
 `docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 6。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
 `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` はコンテナをまたぐ libvirt 接続の回帰テスト。
 
 シェルスクリプトを触ったら最低限 `bash -n` と `shellcheck` を
-`kvm.sh host/wsl.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf`
+`kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf`
 にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/SPEC.md` 9.1 節)。
 
 ## 構造
@@ -50,7 +50,7 @@ bash ブロックに `<...>` を置かない)。手順ごとの補足は各項�
 検証していないことを「動く」と書かず、検証範囲が変わったら手順書の「対象と検証環境」の状態行と `README.md` の一覧を更新する。
 `kvm.sh` の実行時メッセージを `docs/SPEC.md` が引用している箇所 (2.4 節) は原文のまま揃える。
 
-1. **ホスト側 (`kvm.sh`, `host/wsl.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
+1. **ホスト側 (`kvm.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
    引数 (`GUI_ARGS`) と、ホストユーザーの名前・uid/gid (`HOST_ARGS`) に変換する。
 1. **イメージ (`Containerfile`)** — AlmaLinux 10 minimal + `microdnf` のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、
@@ -66,9 +66,8 @@ bash ブロックに `<...>` を置かない)。手順ごとの補足は各項�
 `tr '\0' '\n' </proc/1/environ` で読む (`HOST_USER` / `HOST_UID` / `HOST_GID` / `HOST_RUNTIME_DIR`)。新しい値を渡すときはこの流儀に合わせる。
 パスワードは渡さない (コンテナにログインするものは無く、GUI ユーザーはロックされたまま)。`container/gui/gui` は `runuser` の前にこれらを `unset` する。
 
-ホスト種別ごとの差異は `kvm.sh` 側に `host_*` フック (`host_kvm_missing_hint` / `host_default_runtime_dir` /
-`host_force_software_gl`) の汎用実装を置き、`host/wsl.sh` が WSL2 検出時だけ上書きする。WSL 固有の分岐を `kvm.sh` 本体に
-書かない。
+ホスト種別の抽象化は持たない。対応ホストは AlmaLinux 10 (GNOME あり / 画面なし) だけで、画面の有無は `have_display`
+(`KVM_HOST=headless` か、`DISPLAY` / `WAYLAND_DISPLAY` の有無) だけで決まる。ホスト依存の分岐が要るときは `kvm.sh` 本体に直接書く。
 
 ## 壊しやすい不変条件
 
@@ -78,7 +77,7 @@ bash ブロックに `<...>` を置かない)。手順ごとの補足は各項�
   マウントするとコンテナの logind がそのディレクトリを自分のものとして扱い、`user-runtime-dir@.service` の停止処理で
   ホストの Wayland ソケットや session bus ごと削除してしまう (cockpit を載せていた頃に、そのログアウトで実際に起きた)。
   ソケットは `map_rt_path` で「コンテナ内から見た絶対パス」に変換して環境変数で渡す (unix ソケットは ro マウントでも connect できる)。
-  runtime dir の外を指すシンボリックリンク (WSLg の `/mnt/wslg/...`) は、そのソケットファイルだけを同じパスに ro マウントする。
+  runtime dir の外を指すシンボリックリンクは、そのソケットファイルだけを同じパスに ro マウントする。
 - **コンテナ内の `/run/user/<uid>` は logind が作る tmpfs**。`gui-user-setup` が GUI ユーザーを linger 登録するので
   起動時から session bus 付きで存在する (GTK アプリが前提にする)。
 - **`/tmp/.X11-unix` は読み取り専用マウント**、かつ `/etc/tmpfiles.d/x11.conf` をマスク。コンテナの systemd-tmpfiles に
@@ -112,7 +111,7 @@ bash ブロックに `<...>` を置かない)。手順ごとの補足は各項�
   `data/var-libvirt` → `/var/lib/libvirt` (kvm)、`data/etc-libvirt` → `/etc/libvirt` (kvm)、
   `data/home` → `/home/<ホストユーザー名>` (両方)。`data/` は git 管理外で root 所有。読み書きには `sudo` がいる。
 - コンテナ名は `kvm` と `kvm-gui`、イメージ名は `localhost/kvm-container/{kvm,gui}` に固定 (変数名は `KVM_CONTAINER` / `GUI_CONTAINER` /
-  `KVM_IMAGE` / `GUI_IMAGE`。`NAME` は WSL がホスト名に使うため避けている)。
+  `KVM_IMAGE` / `GUI_IMAGE`。`NAME` は他の用途と紛れるため避けている)。
 
 ## 慣習
 
@@ -120,5 +119,5 @@ bash ブロックに `<...>` を置かない)。手順ごとの補足は各項�
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
 - 挙動を変えたら該当する手順書 (`docs/setup.md` の使い方の基本・補足・付録、`docs/vm.md` の付録など。対象環境が変わるときは
   `README.md` の一覧も) と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
-- 新しいホスト依存の挙動は `host_*` フック経由で足す。新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
+- 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
   `docs/setup.md` 補足「環境変数」の表 (と `README.md` 記法の一覧行) の 3 箇所に反映する。
