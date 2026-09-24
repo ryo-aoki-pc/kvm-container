@@ -7,8 +7,8 @@
 | --- | --- |
 | 対象コミット | main (PR 25「cockpit と firefox を廃止する」まで。付録 B) |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `host/wsl.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | README.md = 導入手順と使い方、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は README を参照し、本書では繰り返さない |
+| 出典 | `kvm.sh` `host/wsl.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md と docs/*.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 他文書との分担 | README.md = 手順書の一覧と記法、docs/setup.md / vm.md / desktop.md / bridge.md = 導入手順と使い方 (変更後の確認手順は各手順書の付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は各手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
@@ -73,11 +73,11 @@ flowchart LR
 
 | 項目 | 理由 (出典) |
 | --- | --- |
-| WSL2 でのブリッジ接続 (`KVM_BRIDGE`) | Hyper-V 仮想スイッチが WSL の vNIC 以外の MAC からのフレームを破棄する (README「Windows + WSL2 では使えません」、PR 14 の検証) |
-| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (README「注意」) |
+| WSL2 でのブリッジ接続 (`KVM_BRIDGE`) | Hyper-V 仮想スイッチが WSL の vNIC 以外の MAC からのフレームを破棄する (docs/bridge.md「注意点」と「付録: WSL2 での検証記録」、PR 14 の検証) |
+| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/vm.md「選択した方針」) |
 | Web コンソール (cockpit) とブラウザ (firefox) | 廃止した。VM の操作は CLI、画面は virt-viewer (PR 25) |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
-| 自動テスト | テストスイートは無い。検証は README 末尾の確認手順を手で流す (9 章) |
+| 自動テスト | テストスイートは無い。検証は docs/setup.md と docs/vm.md の付録の確認手順を手で流す (9 章) |
 
 ### 1.3 用語
 
@@ -129,7 +129,7 @@ WSL 判定はフックの上書きだけを決め、GUI の有無は `KVM_HOST=h
 | podman | root で利用 (`sudo podman`)。`kvm.sh` のすべての podman 操作は `PODMAN="sudo podman"` 経由 | `kvm.sh` |
 | KVM | CPU 仮想化 (AMD SVM / Intel VT-x)。WSL2 は Windows 側のネストした仮想化。`/dev/kvm` が無ければ `modprobe kvm_amd` (`/proc/cpuinfo` に `AuthenticAMD`) または `kvm_intel` を試み、それでも無ければ `host_kvm_missing_hint` を出して exit 1 | `ensure_kvm` (`start_kvm` から) |
 | `modprobe` | `/dev/kvm` が無いときに必要。無ければ `!! modprobe not found: sudo dnf install kmod` で exit 1 | `ensure_kvm` |
-| WSL | 2.5.1 以降 (cgroup v2 が既定)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く) | README |
+| WSL | 2.5.1 以降 (cgroup v2 が既定)。`/etc/wsl.conf` の `systemd=true` は不要 (root の podman は cgroupfs で動く) | docs/setup.md 手順 2 |
 | デスクトップセッション (GUI を使う場合) | GNOME にログインした端末から実行する。`XDG_RUNTIME_DIR` (WSL では未設定でも可) が実在しなければ `!! XDG_RUNTIME_DIR (...) does not exist. Run this from a terminal inside a desktop session` で exit 1 | `gui_args` |
 | GPU (任意) | `/dev/dri` があれば `--device /dev/dri` で `kvm-gui` に渡す。無ければソフトウェア描画 | `gui_args` |
 | SELinux | Enforcing のままで可。`kvm` は `--privileged`、`kvm-gui` と seed 用コンテナは `--security-opt label=disable` で、いずれもラベル分離無し | `start_kvm` / `start_gui` / `prepare_data_dir` |
@@ -148,7 +148,7 @@ WSL 判定はフックの上書きだけを決め、GUI の有無は `KVM_HOST=h
 
 | 確認 | 条件 | 結果 |
 | --- | --- | --- |
-| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see README: ブリッジ)` で exit 1 |
+| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see docs/bridge.md)` で exit 1 |
 | `virbr0` の残存 | `/sys/class/net/virbr0` がある | 警告のみ (`!! virbr0 already exists on the host ...` と `sudo ip link del virbr0` の案内)。起動は続くが `default` ネットワークの起動は失敗する |
 
 ## 3. システム構成
@@ -1076,7 +1076,7 @@ stateDiagram-v2
 
 ## 9. 検証手順
 
-自動テストは無い。変更後は静的検査と、README 末尾の確認手順を手で流す。
+自動テストは無い。変更後は静的検査と、docs/setup.md の付録 (物理 AlmaLinux 10 + GNOME / Windows + WSL2) と docs/vm.md の付録 (VM のライフサイクル) の確認手順を手で流す。本章はその期待結果と検証している項目の表。
 
 ### 9.1 静的検査
 
@@ -1131,7 +1131,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 
 ### 9.5 VM のライフサイクル
 
-OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは README の「VM のライフサイクルの確認手順」)。
+OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは docs/vm.md「付録: VM のライフサイクルの確認手順」)。
 キックスタート (`poweroff`、`%packages` に `qemu-guest-agent`) を `OEMDRV` ラベルの ISO にして `--location <boot ISO>` でインストールすると、
 インストール後に `shut off` になり、永続定義はディスク起動に切り替わる (kernel/initrd の直接起動と boot ISO は外れる)。
 起動の確認は `virsh qemu-agent-command lctest '{"execute":"guest-ping"}'`、再起動の確認はシリアルログ
@@ -1153,7 +1153,7 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | `virsh autostart` → `down kvm` → `up kvm` | `running (booted)`。`data/etc-libvirt/qemu/autostart/` に symlink | 自動起動 |
 | autostart 無しの VM を動かしたまま `down kvm` → `up kvm` | 定義が残り `shut off` のまま | `ON_BOOT=ignore` |
 | UEFI の VM に `virsh undefine` (`--nvram` 無し) | `Cannot undefine domain with NVRAM/varstore` で失敗し、定義も残る | 8 章 |
-| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (README) |
+| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (docs/vm.md「VM を削除する」) |
 | CD-ROM に ISO を入れたまま `virsh undefine --remove-all-storage` | ISO も消える (使い捨ての ISO で確認する) | 8 章の注意が今も正しいか |
 
 ## 付録 A. ファイル一覧とコンテナ内配置

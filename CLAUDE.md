@@ -26,7 +26,8 @@ KVM_HOST=headless ./kvm.sh up      # ホスト種別判定の上書き (auto|wsl
 KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネットワーク "bridged" として登録
 ```
 
-検証は自動化されていない。変更後は README 末尾の「確認手順」(物理 AlmaLinux 10 GNOME / Windows + WSL2) を手で流す。
+検証は自動化されていない。変更後は `docs/setup.md` の付録「確認手順」(物理 AlmaLinux 10 GNOME / Windows + WSL2) と
+`docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 5。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
 `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` はコンテナをまたぐ libvirt 接続の回帰テスト。
@@ -38,6 +39,13 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 ## 構造
 
 3 層に分かれており、どの層を触るかで影響範囲が変わる。現状実装の仕様書 (図付き) は `docs/SPEC.md`。
+
+ドキュメントの構成: `README.md` は手順書の一覧 (用途 / 検証環境) と記法だけ。手順は `docs/setup.md` (導入。他 3 本の前提) / `docs/vm.md` /
+`docs/desktop.md` / `docs/bridge.md`。各手順書は setup-notes と同じ骨格 (`## 実施手順` → 手順 0 の変数ブロック (必須は 1 変数 1 ブロック、
+任意は 1 ブロック、`${VAR:?}` で空を止める、bash ブロックに `<...>` を置かない) → 任意節 → `## ロールバック` → `## 補足`: 対象と検証環境 /
+実施前の状態 / 選択した方針 / 手順の補足 / 完了時点の状態 / 注意点 / 参照 / 付録)。説明が `docs/SPEC.md` にある事項は節番号で参照する。
+検証していないことを「動く」と書かず、検証範囲が変わったら手順書の「対象と検証環境」の状態行と `README.md` の一覧を更新する。
+`kvm.sh` の実行時メッセージを `docs/SPEC.md` が引用している箇所 (2.4 節) は原文のまま揃える。
 
 1. **ホスト側 (`kvm.sh`, `host/wsl.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` / `PULSE_SERVER`) を読んで `podman run` の
@@ -105,9 +113,9 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 ## 慣習
 
-- **コード内のコメントと実行時メッセージは英語、README とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
+- **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
-- 挙動を変えたら README の該当表・確認手順と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)
-  の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
+- 挙動を変えたら該当する手順書 (`docs/setup.md` の使い方の基本・補足・付録、`docs/vm.md` の付録など。対象環境が変わるときは
+  `README.md` の一覧も) と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
 - 新しいホスト依存の挙動は `host_*` フック経由で足す。新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
-  README の環境変数表の 3 箇所に反映する。
+  `docs/setup.md` 補足「環境変数」の表 (と `README.md` 記法の一覧行) の 3 箇所に反映する。
