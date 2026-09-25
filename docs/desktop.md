@@ -17,7 +17,7 @@
 > **現行の Virt Viewer エントリで本書を通した記録は無い** ([対象と検証環境](#対象と検証環境))。
 >
 > - 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は、旧 firefox / virt-manager のランチャーで通した (PR #15)
-> - 手順 1・2・4 の確認のブロックは本実行していない
+> - 手順 4 の確認のブロックは本実行していない (手順 1・2 は `0cab212` で実行した)
 
 1. **変数を設定する**
 
@@ -153,7 +153,7 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 - **状態**:
   - 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は PR #15 で物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通した
   - **ただしそのときのランチャーは旧 firefox / virt-manager のもので、現行の Virt Viewer エントリ (PR #25 で置き換え) を本実行した記録は無い**
-  - 新規の確認行で本実行していないもの: 手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps`、手順 4 の `grep` / `ls`
+  - 手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps` は `0cab212` で実行した (物理 AlmaLinux 10.2 + GNOME、`passwordless sudo podman: ok`)。手順 4 の `grep` / `ls` は `install-desktop` を実行していないので未実行
   - 手順 3 とロールバックの `cd "${REPO:?…}" && ./kvm.sh …` は README の例を変数形に書き換えたもので、その形では再実行していない
 
 | 項目 | 値 |
@@ -230,7 +230,7 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 #### 未確認事項
 
 - 現行の Virt Viewer エントリで `install-desktop` → アクティビティから起動 → 選択ダイアログ → `uninstall-desktop` を通すこと
-- 手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps` と手順 4 の `grep` / `ls` (新規の確認行)
+- 手順 4 の `grep` / `ls` (新規の確認行。手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps` は `0cab212` で実行した)
 - sudoers の具体的な書き方と、それで `launch` が通ること
 - 旧エントリ (`kvm-firefox.desktop` / `kvm-virt-manager.desktop`) が残ったホストでの `install-desktop` による削除
 - アイコン抽出に失敗したときの汎用アイコン表示

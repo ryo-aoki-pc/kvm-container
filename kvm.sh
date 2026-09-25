@@ -22,6 +22,8 @@
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see docs/bridge.md)
 #   KVM_SOFTWARE_GL=1       force software rendering
+#   TZ=Asia/Tokyo           time zone of both containers (default: Asia/Tokyo)
+#   KVM_CLEAN_YES=1         skip the confirmation clean asks before removing data/
 set -euo pipefail
 cd "$(dirname "$0")"
 

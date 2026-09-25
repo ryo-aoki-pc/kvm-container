@@ -356,6 +356,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
     - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
     - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
+    - `0cab212` (現行版): 手順 5 の 2 ブロック → 手順 6 → 手順 7 の 2 ブロック →「表示先が変わったとき」の `up gui` → 付録の確認行 (`auth_unix_rw` / `getent shadow` / `/dev/dri` / `ausearch`) → `KVM_HOST=headless` での `up gui` / `viewer` の拒否 (exit 1 / 2) → `down` (`virbr0` と `/run/kvm-container` が残らない) → `clean`。clone 先は `~/kvm-container` 以外 (git の worktree)、`viewer` と VM は未実施
   - **ディスプレイの無いホストは PR #28 で通した**
     - AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル
     - `build` → `KVM_HOST=headless` での `up` → 下の付録の確認一式 → `down` → `clean`
@@ -363,14 +364,13 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - README の例を変数形に書き換えたもので、その形では再実行していない行:
     - 手順 5 の `cd "${REPO:?…}" && ./kvm.sh build kvm`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"`
   - 新しく足した行で、本実行していないもの:
-    - 手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定の行、手順 5 の `build gui` の判定
-    - 手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定 (手順 7 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
-    - 「表示先が変わったとき」「更新」の各ブロック、ロールバックの `rmi --ignore` とリポジトリの削除
+    - 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install` (`rpm -q podman git` は実行した)、手順 3 の `git clone` (既に clone 済みのホストなので判定で飛ばした)
+    - 「更新」の各ブロック、ロールバックの `rmi --ignore` とリポジトリの削除
 
 | 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
 |---|---|---|
 | ホスト | AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD x86_64 | AlmaLinux 10.2 (Raspberry Pi 5、aarch64)、SELinux Enforcing、podman 5.8.2、グラフィカルセッション外のシェル (`DISPLAY` / `WAYLAND_DISPLAY` 未設定) |
-| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成) | PR #28 (現行の 2 コンテナ構成) |
+| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成)、`0cab212` (手順 5〜7 と `down` / `clean`) | PR #28 (現行の 2 コンテナ構成) |
 | 画面表示 | GNOME (Wayland) デスクトップ | 無し (`>> no display found: GUI disabled ...`) |
 | VM の作成・操作 | ライフサイクル一式 (PR #26。[vm.md](vm.md)) | 未実施 (`virsh list` が通るところまで) |
 | `KVM_BRIDGE` | 未検証 (NIC が無線のみ) | 未検証 |
@@ -584,4 +584,5 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの `sudo podman rmi --ignore …` とリポジトリの削除、更新の 3 項目と `git pull --ff-only` からの通常更新
-- 手順 1〜5・7 の新規の行 (手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定、手順 5 の `build gui` の判定、手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`
+- 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install`、手順 3 の `git clone` (他の新規の行と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
+- `~/kvm-container` に clone したホストでの通し (`0cab212` の実行は git の worktree を clone 先にしたもの)

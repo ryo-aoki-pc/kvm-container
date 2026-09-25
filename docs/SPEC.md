@@ -1070,7 +1070,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done` | どちらも `running` (`degraded` ではない) | Containerfile の unit マスク群が効いている **(実質的な回帰テスト)** |
 | `sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock` | `srw-rw---- root libvirt` | `virtd-socket.conf` の drop-in |
 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` | VM 一覧が出る | コンテナをまたぐ libvirt 接続 **(回帰テスト)** |
-| `sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf` | すべて `"none"` | `kvm-libvirt-conf.service` |
+| `sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"` | すべて `"none"` | `kvm-libvirt-conf.service` |
 | `sudo podman exec kvm getent shadow $USER` | 第 2 フィールドが `!` | GUI ユーザーがロックされている (パスワードを渡していない) |
 | `sudo podman exec kvm-gui ls -la /dev/dri` | `renderD*` が 0666 | `--device /dev/dri` と `gui` の chmod |
 | `sudo ausearch -m avc -ts recent` | 拒否が無い | SELinux 上の問題が無い |
@@ -1092,7 +1092,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `sudo podman exec kvm systemctl is-system-running` | `running` (`degraded` ではない) | Containerfile の unit マスク群 **(実質的な回帰テスト)** |
 | `sudo podman ps` | `kvm` だけで `kvm-gui` が居ない | GUI コンテナを起動していない |
 | `sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock` | `srw-rw---- root libvirt` | `virtd-socket.conf` の drop-in |
-| `sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf` | すべて `"none"` | `kvm-libvirt-conf.service` |
+| `sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"` | すべて `"none"` | `kvm-libvirt-conf.service` |
 | `sudo podman exec kvm getent shadow $USER` | 第 2 フィールドが `!` | GUI ユーザーがロックされている (`kvm` にも GUI ユーザーは作られる) |
 | `./kvm.sh virsh list --all` | 一覧が出る (VM が無ければヘッダだけ) | `kvm` の libvirt に `podman exec` で届く |
 | `ip -br addr show virbr0` | `192.168.122.1/24` | `default` ネットワークがホスト上に作られている (`--network host`) |

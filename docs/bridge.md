@@ -201,13 +201,18 @@ cd "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}" && ./
 ./kvm.sh virsh net-list      # bridged が消えている (default だけ)
 ```
 
-ホストのブリッジと bridge-slave を消し、NIC の元の接続を上げる。コンソールから、このブロックだけを単独で貼る。
+ホストのブリッジと bridge-slave を消す。コンソールから、このブロックだけを単独で貼る。sudo のパスワードを聞かれる。
 
 - `NIC_CON` は手順 1 で控えた元の接続名。新しいシェルなら、手順 1 を貼り直さずに `NIC_CON=` で控えた名前を入れてから貼る (手順 1 を貼り直すと `bridge-slave-…` の名前になる)
 - bridge-slave の接続名は NetworkManager の既定 (`bridge-slave-<NIC>`)。違っていれば `nmcli connection show` で確かめる
 
 ```bash
 sudo nmcli connection delete "${BRIDGE:?手順 1 の BRIDGE が空のまま。手順 1 を貼り直す}" "bridge-slave-${NIC:?手順 1 の NIC が空のまま。値を入れて貼り直す}"
+```
+
+**次のブロックは、パスワードを入れて削除が終わってから貼る。** NIC の元の接続を上げる (ここでブリッジは消えているので、NIC に IP が戻るまで通信できない)。
+
+```bash
 sudo nmcli connection up "${NIC_CON:?手順 1 で控えた元の接続名を NIC_CON に入れてから貼る}"
 ```
 
