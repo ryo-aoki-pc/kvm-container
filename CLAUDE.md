@@ -27,7 +27,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 ```
 
 検証は自動化されていない。変更後は `docs/setup.md` の付録「確認手順」(物理 AlmaLinux 10 GNOME / ディスプレイ無し) と
-`docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 6。
+`docs/vm.md` の付録「VM のライフサイクルの確認手順」を手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` 手順 7。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
 `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` はコンテナをまたぐ libvirt 接続の回帰テスト。
@@ -46,6 +46,15 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 完了時点の状態 / 注意点 / 参照 / 付録)。手順は `## 実施手順` の中の番号付きリスト (マーカーはすべて `1.`、
 項目の 1 行目は太字、番号付き見出しは使わない) で、手順 1 が変数ブロック (必須は 1 変数 1 ブロック、任意は 1 ブロック、`${VAR:?}` で空を止める、
 bash ブロックに `<...>` を置かない)。手順ごとの補足は各項目の末尾の `<details><summary>補足: …</summary>` に折り畳む。
+`## 実施手順` の直下は `> [!IMPORTANT]` (実行する場所とユーザー・前提の手順書・対話入力のある手順・別の場所で行う操作) と読み方の箇条書き。
+通しで実行していない文書 (`docs/bridge.md`、現行エントリの `docs/desktop.md`) は、リードに `> [!WARNING]` で検証範囲を書く。
+表現の規則も setup-notes (ed11163) に揃える: 手順の本文は「操作 → 確認」の箇条書き (150 字を超える段落を残さない。理由・実測は折り畳みへ)、
+アラートは本文の最上位だけ (番号付きリストや `<details>` の中は GitHub が描画しない。手順の中の注意は `- **注意**: …`)、
+取り戻せない削除 (`clean`、`undefine --storage`) の直前は `> [!CAUTION]`、アラートは 1 文書 5 個まで、補足の状態行は入れ子の箇条書き、
+`**` を約物に接して閉じない。付録 (最初の `### 付録` から後) は検証記録なので書き直さない (未確認事項の更新は可)。
+**上から順に貼るだけで通る**ことを保つ: clone も `docs/setup.md` の手順に含め、画面の有無などの分岐は読者に選ばせずブロックの中で判定する
+(`[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || …`、`sudo podman container exists kvm-gui`)。sudo のパスワードを聞くコマンドは単独のブロックにする
+(複数行のブロックの途中で聞かれると、残りの行がパスワードとして読まれるか捨てられる)。
 説明が `docs/SPEC.md` にある事項は節番号で参照する。
 検証していないことを「動く」と書かず、検証範囲が変わったら手順書の「対象と検証環境」の状態行と `README.md` の一覧を更新する。
 `kvm.sh` の実行時メッセージを `docs/SPEC.md` が引用している箇所 (2.4 節) は原文のまま揃える。
