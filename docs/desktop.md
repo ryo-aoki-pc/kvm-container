@@ -2,26 +2,35 @@
 
 ## 実施手順
 
-**GNOME にログインした端末で、`sudo` を付けずに一般ユーザーとして実行する** (`install-desktop` は root だと `!! run this without sudo` で止まる)。前提は[導入](setup.md)を通してあること。`gui` イメージは先に作っておかなくてよい。無ければ手順 3 の `install-desktop` が自分でビルドする (時間がかかる)。手順 3・4 は内部で `sudo podman` を呼ぶので、sudo のタイムスタンプが切れていればパスワードを聞かれる (答えてから続きを貼る)。手順 4 の動作確認にはコンテナの起動が要る。手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る (各手順の末尾で折り畳んである「補足」の中のブロックは、手順を進めるためには貼らなくてよい)。理由・実測・落とし穴は、手順ごとのものはその手順の「補足」に、全体に関わるものは後半の[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。
+> [!IMPORTANT]
+> - **GNOME にログインした端末で、`sudo` を付けずに一般ユーザーとして実行する**。`install-desktop` は root だと `!! run this without sudo` で止まる
+> - **前提は[導入](setup.md)を通してあること**。`gui` イメージは無くてもよい (手順 3 の `install-desktop` が自分でビルドする。時間がかかる)
+> - **パスワード無しの `sudo podman` は、先に自分で sudoers に設定しておく**。書き方は本書では扱わず、手順 2 で確かめるだけ (権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
+> - **手順 4 の途中で、GNOME のアクティビティから起動する操作がある**。手順 3・4 は、sudo のタイムスタンプが切れていればパスワードを聞かれる
 
-できあがると、GNOME のアクティビティで「Virt Viewer」を検索し、クリックで起動できる (ホストに直接入れたアプリと同じ使い勝手。デスクトップにアイコンは置かない)。起動すると VM を一覧から選ぶダイアログが出る。
+- 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る
+- 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
+- できあがると、GNOME のアクティビティで「Virt Viewer」を検索し、クリックで起動できる (デスクトップにアイコンは置かない)。起動すると VM を一覧から選ぶダイアログが出る
+- 手順の後: 戻すときは[ロールバック](#ロールバック)。VM の作成・操作は [vm.md](vm.md)
 
-戻すときは[ロールバック](#ロールバック)。VM の作成・操作は [vm.md](vm.md)。
+> [!WARNING]
+> **現行の Virt Viewer エントリで本書を通した記録は無い** ([対象と検証環境](#対象と検証環境))。
+>
+> - 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は、旧 firefox / virt-manager のランチャーで通した (PR #15)
+> - 手順 1・2・4 の確認のブロックは本実行していない
 
 1. **変数を設定する**
 
-   **このブロックは編集必須の変数が無い。** clone 先が `~/kvm-container` ならそのまま貼る。**新しいシェルを開いたら (SSH を張り直したあとも) 先にこのブロックを貼り直す。**
+   - **編集するものは無い**。clone 先が `~/kvm-container` 以外のときだけ `REPO` を変える
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、先にこのブロックを貼り直す。最後の行でリポジトリ直下に移る
 
    ```bash
    REPO=~/kvm-container   # このリポジトリを clone した場所 (ホームディレクトリ配下)。<REPO>
-   ```
-
-   値を読み戻して確かめる。`kvm.sh` が見つからなければ `REPO` を直してから先へ進む。
-
-   ```bash
    printf 'REPO = %s\n' "${REPO}"
-   ls -l "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}/kvm.sh"
+   cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ls -l kvm.sh
    ```
+
+   - `kvm.sh` の行が出ればよい。見つからなければ `REPO` を直して貼り直す
 
    <details>
    <summary>補足: 変数について</summary>
@@ -30,21 +39,20 @@
 
    </details>
 
-1. **パスワード無しの sudo podman を確認する**
-
-   アクティビティから起動したプロセスには端末が無く、sudo のパスワードを入力できない。そのためランチャーが呼ぶ `kvm.sh launch` は `sudo -n podman exec kvm-gui gui virt-viewer` を実行する。実行ユーザーがパスワード無しで `sudo podman` を実行できるように、sudoers を事前に設定しておく (書き方は本書では扱わない。権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))。
-
-   設定できているかを確かめる。`passwordless sudo podman: ok` と出れば通っている。
+1. **パスワード無しの sudo podman を確かめる**
 
    ```bash
    sudo -k; sudo -n podman ps >/dev/null && echo 'passwordless sudo podman: ok'
    ```
 
-   `sudo: a password is required` と出たら、sudoers を整えてからこのブロックを貼り直す。通らないまま手順 3 に進んでも、配置はできるがアクティビティからの起動は失敗する (通知で知らされる)。
+   - `passwordless sudo podman: ok` と出れば通っている
+   - `sudo: a password is required` と出たら、sudoers を整えてからこのブロックを貼り直す (書き方は本書では扱わない)
+   - 通らないまま手順 3 に進んでも配置はできるが、アクティビティからの起動は失敗する (通知で知らされる)
 
    <details>
    <summary>補足: パスワード無しの sudo podman</summary>
 
+   - アクティビティから起動したプロセスには端末が無く、sudo のパスワードを入力できない。そのためランチャーが呼ぶ `kvm.sh launch` は `sudo -n podman exec kvm-gui gui virt-viewer` を実行する
    - `sudo -k` は sudo のタイムスタンプを消す。直前に対話的な `sudo` を通していると、そのタイムスタンプで `sudo -n` が通ってしまい NOPASSWD の有無を見誤るため、先に消してから `sudo -n` を試す。端末の無いプロセスでは既定 (`timestamp_type=tty`) の sudo タイムスタンプは使えないはずなので、この形が実際の起動条件に近い (未検証)
    - NOPASSWD が無いまま起動すると、`launch` は `sudo -n` のエラー出力に `password` を含むことを見て、通知に `could not start virt-viewer: ... configure passwordless sudo for podman (launch runs sudo -n without a terminal)` と出す
    - コンテナが起動していないときは、通知で `check that the GUI container is running (./kvm.sh up)` と `./kvm.sh up` を案内する。**`launch` は `./kvm.sh viewer` と違って `up` を経由しない** ので、コンテナが止まっていれば自分で `./kvm.sh up` する
@@ -58,9 +66,10 @@
    cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh install-desktop
    ```
 
-   `gui` イメージが無ければ先に `>> building localhost/kvm-container/gui ...` でビルドが走る。最後に `>> installed: ...` と `>> search for "Virt Viewer" in the Activities overview ...` が出れば配置できている。sudo のパスワードを聞かれたら答えてから次のブロックを貼る。
-
-   リポジトリを別の場所に移動したら、このブロックを再実行する (`.desktop` の `Exec` は絶対パス)。
+   - `gui` イメージが無ければ、先に `>> building localhost/kvm-container/gui ...` でビルドが走る
+   - 最後に `>> installed: ...` と `>> search for "Virt Viewer" in the Activities overview ...` が出れば配置できている
+   - sudo のパスワードを聞かれたら、答えてから次のブロックを貼る
+   - リポジトリを別の場所に移動したら、手順 1 から貼り直してこのブロックを再実行する (`.desktop` の `Exec` は絶対パス)
 
    <details>
    <summary>補足: 配置されるもの</summary>
@@ -88,16 +97,25 @@
    ./kvm.sh up
    ```
 
-   sudo のパスワードを聞かれたら答える。`>> ready. VMs: ...` (すでに動いていれば `>> kvm is already running` / `>> kvm-gui is already running`) が出てから、GNOME のアクティビティ (Super キー) で「Virt Viewer」を検索して起動する。VM の選択ダイアログが出れば動いている (VM が 1 つも無ければ先に [vm.md 手順 3](vm.md#実施手順) で作る)。起動しないときは、失敗の理由がデスクトップ通知に出る。次のブロックはそれからか、ダイアログを閉じてから貼る。
+   - `>> ready. VMs: ...` (すでに動いていれば `>> kvm is already running` / `>> kvm-gui is already running`) が出るまで待つ
+   - sudo のパスワードを聞かれたら答える
 
-   配置先を確かめる。`TryExec` / `Exec` に `${REPO}/kvm.sh` の絶対パスが入っていること、アイコンが 1 つ以上あることを見る。
+   出たら、GNOME のアクティビティ (Super キー) で「Virt Viewer」を検索して起動する。
+
+   - VM の選択ダイアログが出れば動いている (VM が 1 つも無ければ、先に [vm.md 手順 3](vm.md#実施手順) で作る)
+   - 起動しないときは、失敗の理由がデスクトップ通知に出る
+   - **次のブロックは、ダイアログを閉じてから (起動しなければ通知を見てから) 貼る**
+
+   配置先を確かめる。
 
    ```bash
    grep -E '^(TryExec|Exec)=' "${XDG_DATA_HOME:-$HOME/.local/share}/applications/kvm-virt-viewer.desktop"
    ls "${XDG_DATA_HOME:-$HOME/.local/share}"/icons/hicolor/*/apps/virt-viewer.*
    ```
 
-   起動しない場合は `./kvm.sh logs gui` (`kvm-gui` 内 `/var/log/gui.log`) と `journalctl --user -b` を確認する。
+   - `TryExec` / `Exec` に `${REPO}/kvm.sh` の絶対パスが入っていること
+   - アイコンが 1 つ以上あること
+   - 起動しない場合は `./kvm.sh logs gui` (`kvm-gui` 内 `/var/log/gui.log`) と `journalctl --user -b` を確認する
 
    <details>
    <summary>補足: 起動と切り分け</summary>
@@ -118,9 +136,10 @@
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh uninstall-desktop
 ```
 
-以前のバージョンが入れた `kvm-firefox.desktop` / `kvm-virt-manager.desktop` とそのアイコンも一緒に消える (firefox + cockpit と virt-manager は廃止した)。手順 2 で整えた sudoers は戻さない (本書の範囲外)。コンテナと VM はそのまま残る。コンテナごと止める・消すのは[導入のロールバック](setup.md#ロールバック)。
-
-`uninstall-desktop` は PR #15 で旧ランチャー (firefox / virt-manager) に対して本実行した。現行の Virt Viewer エントリに対する本実行記録は無い。
+- 以前のバージョンが入れた `kvm-firefox.desktop` / `kvm-virt-manager.desktop` とそのアイコンも一緒に消える (firefox + cockpit と virt-manager は廃止した)
+- 手順 2 の前に整えた sudoers は戻さない (本書の範囲外)
+- コンテナと VM はそのまま残る。コンテナごと止める・消すのは[導入のロールバック](setup.md#ロールバック)
+- `uninstall-desktop` は PR #15 で旧ランチャー (firefox / virt-manager) に対して本実行した。現行の Virt Viewer エントリに対する本実行記録は無い
 
 ---
 
@@ -128,9 +147,14 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 
 ### 対象と検証環境
 
-- **目的**: 物理マシン / VM の AlmaLinux 10 + GNOME で、`./kvm.sh viewer` を端末から打つ代わりに、アクティビティ (アプリ一覧) の「Virt Viewer」から VM の画面を開けるようにする。ランチャーは `~/.local/share/applications/` に置く `.desktop` ファイル 1 つとアイコンだけで、ホストにパッケージは入れない
-- **進め方**: NOPASSWD の `sudo podman` を確かめ、`./kvm.sh install-desktop` で配置し、`./kvm.sh up` してからアクティビティで起動する。読者が書き換えるのは手順 1 の `REPO` だけ (既定でよければそのまま)
-- **状態**: 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は PR #15 で物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通した。**ただしそのときのランチャーは旧 firefox / virt-manager のもので、現行の Virt Viewer エントリ (PR #25 で置き換え) を本実行した記録は無い。** 手順 2 の `sudo -k; sudo -n podman ps` と手順 4 の `grep` / `ls` は新規の確認行で本実行していない。手順 3 とロールバックの `cd "${REPO:?…}" && ./kvm.sh …` は README の例を変数形に書き換えたもので、その形では再実行していない
+- **目的**: 物理マシン / VM の AlmaLinux 10 + GNOME で、`./kvm.sh viewer` を端末から打つ代わりに、アクティビティ (アプリ一覧) の「Virt Viewer」から VM の画面を開けるようにする
+  - ランチャーは `~/.local/share/applications/` に置く `.desktop` ファイル 1 つとアイコンだけで、ホストにパッケージは入れない
+- **進め方**: NOPASSWD の `sudo podman` を確かめ、`./kvm.sh install-desktop` で配置し、`./kvm.sh up` してからアクティビティで起動する。読者が書き換える値は無い (clone 先を変えたときだけ手順 1 の `REPO`)
+- **状態**:
+  - 仕組み (`install-desktop` → アクティビティから `launch` → `uninstall-desktop`) は PR #15 で物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing) で通した
+  - **ただしそのときのランチャーは旧 firefox / virt-manager のもので、現行の Virt Viewer エントリ (PR #25 で置き換え) を本実行した記録は無い**
+  - 新規の確認行で本実行していないもの: 手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps`、手順 4 の `grep` / `ls`
+  - 手順 3 とロールバックの `cd "${REPO:?…}" && ./kvm.sh …` は README の例を変数形に書き換えたもので、その形では再実行していない
 
 | 項目 | 値 |
 |---|---|
@@ -139,15 +163,16 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 | 現行 Virt Viewer エントリ | 本実行記録なし (PR #25 は静的検査のみ) |
 | ディスプレイ無し | 対象外 (アクティビティが無い) |
 
-> **注記**: 環境固有の値は**シェル変数**で書いてある。[手順 1](#実施手順) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
+> [!NOTE]
+> 環境固有の値は**シェル変数**で書いてある。[手順 1](#実施手順) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
 >
 > | 変数 | 意味 | 例 |
 > |---|---|---|
 > | `${REPO}` | このリポジトリを clone した場所。`install-desktop` はここの `kvm.sh` の絶対パスを `.desktop` に埋める | `~/kvm-container` |
 >
-> `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` など) は手順 1 の変数ではなく `KVM_BRIDGE=br0 ./kvm.sh up` のように前に付ける。一覧は[導入の補足](setup.md#環境変数)。
->
-> 出力例・表の中の値は `<このリポジトリ>` / `<size>` などのプレースホルダで書いてある。`<...>` を含むコマンドは bash のコードブロックに置いていない。sudoers の内容とホストのパスワードはこの文書に載せない。
+> - `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` など) は手順 1 の変数ではなく、`KVM_BRIDGE=br0 ./kvm.sh up` のように前に付ける。一覧は[導入の補足](setup.md#環境変数)
+> - 出力例・表の中の値は `<このリポジトリ>` / `<size>` などのプレースホルダで書いてある。`<...>` を含むコマンドは bash のコードブロックに置いていない
+> - sudoers の内容とホストのパスワードはこの文書に載せない
 
 手順書全体に関わる理由・実測・落とし穴と検証記録 (手順ごとのものは各手順の末尾の「補足」にある)。手順を実行するだけなら読まなくてよい。
 
@@ -157,14 +182,18 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 |---|---|
 | [導入](setup.md) | 済み (`./kvm.sh virsh list` が通る)。`gui` イメージは有っても無くてもよい |
 | `~/.local/share/applications/` | `kvm-virt-viewer.desktop` は無い。旧版の `kvm-firefox.desktop` / `kvm-virt-manager.desktop` が残っていてもよい (手順 3 が消す) |
-| sudoers | `sudo podman` は対話的 (パスワードあり)。`launch` のためには NOPASSWD が要る (手順 2) |
+| sudoers | `sudo podman` は対話的 (パスワードあり)。`launch` のためには NOPASSWD が要る (読者が設定し、手順 2 で確かめる) |
 | VM の画面 | 端末から `./kvm.sh viewer` で開いている |
 
 ### 選択した方針
 
 - **検索して起動する形にし、デスクトップにアイコンは置かない**: GNOME の標準の流儀 (`~/.local/share/applications/` の `.desktop`) に合わせる。ホストに直接入れたアプリと同じ使い勝手になる
-- **`Exec` は絶対パス、`TryExec` で存在確認**: `.desktop` は `Exec="<このリポジトリ>/kvm.sh" launch virt-viewer` と `TryExec=<このリポジトリ>/kvm.sh` を持つ。リポジトリを移動すると `TryExec` の対象が無くなり、古いエントリは自動で非表示になる。そのため移動後は `install-desktop` の再実行が要る
-- **`launch` は `sudo -n`**: アクティビティから起動したプロセスには端末が無く、sudo のパスワードを入力できない。`launch` は `sudo -n podman exec kvm-gui gui virt-viewer` を実行し、失敗の理由はデスクトップ通知で伝える。podman の NOPASSWD sudo はホスト root 相当の権限付与になる (設定するかは利用者の判断。[SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
+- **`Exec` は絶対パス、`TryExec` で存在確認**: `.desktop` は `Exec="<このリポジトリ>/kvm.sh" launch virt-viewer` と `TryExec=<このリポジトリ>/kvm.sh` を持つ
+  - リポジトリを移動すると `TryExec` の対象が無くなり、古いエントリは自動で非表示になる
+  - そのため移動後は `install-desktop` の再実行が要る
+- **`launch` は `sudo -n`**: アクティビティから起動したプロセスには端末が無く、sudo のパスワードを入力できない
+  - `launch` は `sudo -n podman exec kvm-gui gui virt-viewer` を実行し、失敗の理由はデスクトップ通知で伝える
+  - podman の NOPASSWD sudo はホスト root 相当の権限付与になる。設定するかは利用者の判断なので、sudoers の書き方は本書に載せない ([SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
 - **エントリは VM の選択ダイアログを開く**: Virt Viewer のエントリは、VM 名なしの `./kvm.sh viewer` と同じく VM の選択ダイアログを開く。VM ごとにエントリは作らない
 
 ### 完了時点の状態
@@ -177,7 +206,8 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 
 ### 注意点
 
-- **NOPASSWD の意味**: `launch` のために podman を NOPASSWD にすると、そのユーザーはパスワード無しでホスト root 相当の操作ができる。通常の `./kvm.sh` は対話的な `sudo` のままで動くので、アクティビティからの起動を使わないなら設定しなくてよい ([SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
+- **NOPASSWD の意味**: `launch` のために podman を NOPASSWD にすると、そのユーザーはパスワード無しでホスト root 相当の操作ができる
+  - 通常の `./kvm.sh` は対話的な `sudo` のままで動くので、アクティビティからの起動を使わないなら設定しなくてよい ([SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
 - **リポジトリを移動したら再実行**: `.desktop` は絶対パス。`TryExec` により古いパスのエントリは自動で非表示になるだけで、直るわけではない。`./kvm.sh install-desktop` を再実行する
 - **コンテナが起動していないと通知だけ出る**: `launch` は `up` を経由しない。再ログイン後に表示先が変わったときも同じで、先に端末から `./kvm.sh up` する ([導入の「表示先が変わったとき」](setup.md#表示先が変わったとき-再ログイン後))
 - **`./kvm.sh viewer` はそのまま使える**: ランチャーを入れても端末からの `./kvm.sh viewer` は変わらない。こちらは `up` を経由するので、コンテナが止まっていても再ログイン後でもそのまま使える
@@ -200,7 +230,7 @@ cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" &&
 #### 未確認事項
 
 - 現行の Virt Viewer エントリで `install-desktop` → アクティビティから起動 → 選択ダイアログ → `uninstall-desktop` を通すこと
-- 手順 2 の `sudo -k; sudo -n podman ps` と手順 4 の `grep` / `ls` (新規の確認行)
+- 手順 1 の `cd` と `ls -l kvm.sh`、手順 2 の `sudo -k; sudo -n podman ps` と手順 4 の `grep` / `ls` (新規の確認行)
 - sudoers の具体的な書き方と、それで `launch` が通ること
 - 旧エントリ (`kvm-firefox.desktop` / `kvm-virt-manager.desktop`) が残ったホストでの `install-desktop` による削除
 - アイコン抽出に失敗したときの汎用アイコン表示
