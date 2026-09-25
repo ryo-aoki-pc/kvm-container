@@ -2,97 +2,143 @@
 
 ## 実施手順
 
-**すべて対象ホストの一般ユーザーのシェルで実行する** (root や `sudo -i` のシェルは不可。`kvm.sh` は root で実行すると `!! run kvm.sh as a regular user, not root` で止まる)。画面を使うなら GNOME にログインした端末から実行する。手順 2 と手順 4 は sudo のパスワードを聞かれる (手順 2 は `[y/N]` も)。手順 5 も sudo のタイムスタンプが切れていれば聞かれる。手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る (各手順の末尾で折り畳んである「補足」の中のブロックは、手順を進めるためには貼らなくてよい)。理由・実測・落とし穴は、手順ごとのものはその手順の「補足」に、全体に関わるものは後半の[補足](#補足)にまとめてあり、実行するだけなら読まなくてよい。実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [SPEC.md](SPEC.md)。
+> [!IMPORTANT]
+> - **すべて対象ホストの一般ユーザーのシェルで実行する**。root や `sudo -i` のシェルでは、`kvm.sh` が `!! run kvm.sh as a regular user, not root` で止まる
+> - **画面を使うなら、GNOME にログインした端末から実行する**。SSH のシェルからでは `kvm-gui` が起動しない
+> - **手順 2 と、手順 5 の最初のブロックでは sudo のパスワードを聞かれる** (手順 2 は `[y/N]` も)。そのブロックだけ続けて貼らない
+> - **`./kvm.sh` は内部で `sudo podman` を呼ぶ**。sudo のタイムスタンプが切れていれば、ほかのブロックでも聞かれる。新しい端末や長い待ちの後は、先に `sudo -v` を単独で貼っておく ([注意点](#注意点))
 
-この手順を通すと、[VM の作成と操作](vm.md)、[アクティビティから起動する](desktop.md)、[ブリッジ](bridge.md) の各手順書が使える。
-
-日常の操作は[使い方の基本](#使い方の基本)、再ログイン後は[表示先が変わったとき](#表示先が変わったとき-再ログイン後)、旧版からは[更新](#更新)、戻すときは[ロールバック](#ロールバック)。
+- 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る。画面の有無による違いはブロックの中で判定するので、どちらのホストでも同じブロックを貼る
+- 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
+- 実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [SPEC.md](SPEC.md)
+- 手順の後: [VM の作成と操作](vm.md)、[アクティビティから起動する](desktop.md)、[ブリッジ](bridge.md) の各手順書が使える
+- 日常の操作は[使い方の基本](#使い方の基本)、再ログイン後は[表示先が変わったとき](#表示先が変わったとき-再ログイン後)、旧版からは[更新](#更新)、戻すときは[ロールバック](#ロールバック)
 
 1. **変数を設定する**
 
-   **このブロックは編集必須の変数が無い。** リポジトリはユーザーのホームディレクトリ配下に clone して使う (例: `git clone … ~/kvm-container`)。VM のディスクや定義はその中の `data/` に置かれる。clone 先が `~/kvm-container` ならそのまま貼る。**新しいシェルを開いたら (SSH を張り直したあとも) 先にこのブロックを貼り直す。**
+   - **編集するものは無い**。clone 先を `~/kvm-container` 以外にするときだけ `REPO` を変える
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、先にこのブロックを貼り直す。clone 済みなら、最後の行でリポジトリ直下に移る
 
    ```bash
-   REPO=~/kvm-container   # このリポジトリを clone した場所。ユーザーのホームディレクトリ配下にする。<REPO>
-   ```
-
-   **値を読み戻して確かめる。** `kvm.sh` が表示されなければ、ここで止めて直す。
-
-   ```bash
-   ls -l "${REPO}/kvm.sh"
+   REPO=~/kvm-container                                        # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
+   REPO_URL=https://github.com/ryo-aoki-pc/kvm-container.git   # このリポジトリ。固定。<REPO_URL>
+   printf '%-8s = %s\n' REPO "${REPO}" REPO_URL "${REPO_URL}"
+   [ ! -d "${REPO}" ] || cd "${REPO}"
    ```
 
    <details>
    <summary>補足: 変数について</summary>
 
-   `REPO` は clone 先を指すだけで、`kvm.sh` に渡す変数ではない。`kvm.sh` は自分のあるディレクトリに `cd` してから動き、`data/` もそこ (`KVM_DATA_DIR=$PWD/data`) に作る。ホームディレクトリ配下 (`user_home_t`) に置く前提で、seed コンテナと両コンテナはラベル分離なし (`--security-opt label=disable` / `--privileged`) で動かし、`data/` を relabel しない。他の場所に置いた場合は検証していない。`install-desktop` はランチャーに `kvm.sh` の絶対パスを書くので、リポジトリを移動したら再実行する ([desktop.md](desktop.md))。
+   `REPO` は clone 先を指すだけで、`kvm.sh` に渡す変数ではない。`kvm.sh` は自分のあるディレクトリに `cd` してから動き、`data/` もそこ (`KVM_DATA_DIR=$PWD/data`) に作る。VM のディスクや定義はその `data/` に置かれる。
+
+   - ホームディレクトリ配下 (`user_home_t`) に置く前提で、seed コンテナと両コンテナはラベル分離なし (`--security-opt label=disable` / `--privileged`) で動かし、`data/` を relabel しない。他の場所に置いた場合は検証していない
+   - `install-desktop` はランチャーに `kvm.sh` の絶対パスを書くので、リポジトリを移動したら再実行する ([desktop.md](desktop.md))
+   - `REPO_URL` は公開リポジトリの HTTPS の URL で、clone に認証は要らない。手順 3 で使う
+   - 最後の行は、clone 前 (ディレクトリが無い) には何もしない。新しいシェルで貼り直したときに、以降の `./kvm.sh` が相対パスで動くようにするため
 
    </details>
 
-1. **podman を入れる**
+1. **podman と git を入れる**
 
-   ホストに入れるのは podman だけ (root で利用、`sudo` 可)。qemu・libvirt・virt-viewer はホストに入れない。
+   ホストに入れるのは podman と git だけ (podman は root で使う)。qemu・libvirt・virt-viewer はホストに入れない。
 
    ```bash
-   sudo dnf install podman
+   sudo dnf install podman git
    ```
 
    sudo のパスワードと `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
 
    ```bash
-   rpm -q podman
+   rpm -q podman git
    ```
 
-   <details>
-   <summary>補足: podman</summary>
+   - 2 行とも `podman-…` / `git-…` の版が出ればよい
 
-   `kvm.sh` は `sudo podman` 固定で、rootless podman は使わない。ホストの libvirt とは無関係なので、ホストに qemu・libvirt を入れてはいけないわけではないが、入れて動かしていると `virbr0` が衝突する ([注意点](#注意点))。ホスト要件は [SPEC.md 2.2](SPEC.md#22-ホスト要件)、実行ユーザーの要件は [2.3](SPEC.md#23-実行ユーザーの要件)。
+   <details>
+   <summary>補足: podman と git</summary>
+
+   `kvm.sh` は `sudo podman` 固定で、rootless podman は使わない。git は手順 3 の clone と[更新](#更新)の `git pull` にだけ使う。
+
+   - ホストの libvirt とは無関係なので、ホストに qemu・libvirt を入れてはいけないわけではない。ただし入れて動かしていると `virbr0` が衝突する ([注意点](#注意点))
+   - ホスト要件は [SPEC.md 2.2](SPEC.md#22-ホスト要件)、実行ユーザーの要件は [2.3](SPEC.md#23-実行ユーザーの要件)
 
    </details>
 
-1. **ホストを準備する (種別ごとに 1 つ選ぶ)**
-
-   **上から順ではなく、自分のホストに当てはまる 1 つだけを行う。**
-
-   **A. 物理マシン / VM の AlmaLinux 10 + GNOME**
-
-   ファームウェアで SVM (AMD) / VT-x (Intel) を有効にしておく。SELinux は Enforcing のままでよい (`--privileged` のためラベル分離は無効)。**GNOME にログインした状態の端末から** `kvm.sh` を実行する (`DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` を元に `kvm-gui` へ表示先を渡すため)。
+1. **リポジトリを clone する**
 
    ```bash
-   getenforce                                            # Enforcing のままで可
-   env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
+   [ -e "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}/kvm.sh" ] || git clone "${REPO_URL:?手順 1 の REPO_URL が空のまま。手順 1 を貼り直す}" "${REPO}"
+   cd "${REPO}" && ls -l kvm.sh
    ```
 
-   **B. ディスプレイの無いホスト (SSH のみ)**
-
-   何もしない。`./kvm.sh up` は `kvm` コンテナだけを起動し、GUI イメージはビルドしない。VM の作成・操作は `./kvm.sh virt-install` / `./kvm.sh virsh` で行う。画面は表示できないので、ゲストにはシリアルコンソールやネットワーク経由でアクセスする ([VM の作成と操作](vm.md) の手順 4)。
+   - `kvm.sh` の行 (実行権限付き) が出ればよい
+   - すでに clone してあれば、`git clone` は飛ばされる
+   - 以降のブロックは、このディレクトリ (リポジトリ直下) で貼る
 
    <details>
-   <summary>補足: ホストの準備</summary>
+   <summary>補足: clone</summary>
 
-   - **ホスト種別の判定は無い**: 画面の有無だけを見る。`KVM_HOST` が `headless` でなく、`DISPLAY` か `WAYLAND_DISPLAY` が設定されていれば `kvm-gui` を起動する (`have_display`。[SPEC.md 2.1](SPEC.md#21-ディスプレイの判定-have_display))
-   - **物理 GNOME**: `env | grep …` で値が入っていることを確かめるのは、`kvm.sh up` が実行ユーザーのセッション環境を `kvm-gui` に持ち込むため。SSH 越しや `sudo -i` のシェルでは `WAYLAND_DISPLAY` などが無く、`kvm-gui` は起動されない (`>> no display found`)。SELinux は Enforcing のまま (`kvm` は `--privileged`、`kvm-gui` は `label=disable`)
-   - **ディスプレイ無し**: `up` は `kvm` だけを起動し、`up gui` と `viewer` は `!! no display found …` で終了する (それぞれ exit 1 / exit 2)。`KVM_HOST=headless` で画面のあるホストでも同じ挙動にできる
+   - `data/` は git 管理外 (`.gitignore`) で、手順 6 の `up` が初めて作る。clone した直後には無い
+   - `REPO` にファイルの入った別のディレクトリがあると、`git clone` は `already exists and is not an empty directory` で止まる。`REPO` を変えて手順 1 から貼り直す
+
+   </details>
+
+1. **ホストを確認する**
+
+   ```bash
+   getenforce
+   env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'
+   if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then echo '画面あり: kvm と kvm-gui を使う'; else echo '画面なし: kvm だけを使う'; fi
+   ```
+
+   - `getenforce` は `Enforcing` のままでよい
+   - GNOME の端末なら `WAYLAND_DISPLAY` / `DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY` の行が並び、`画面あり` と出る
+   - ディスプレイの無いホスト (SSH のみ) では `画面なし` と出る。これで正常で、以降のブロックは `kvm` だけを扱う
+   - **注意**: GNOME のホストで `画面なし` と出たら、SSH か `sudo -i` のシェルで貼っている。GNOME の端末を開き、手順 1 から貼り直す
+   - ファームウェアで SVM (AMD) / VT-x (Intel) を有効にしておく
+
+   <details>
+   <summary>補足: ホストの確認</summary>
+
+   - **ホスト種別の判定は無い**: 画面の有無だけを見る。`KVM_HOST` が `headless` でなく、`DISPLAY` か `WAYLAND_DISPLAY` が設定されていれば `kvm-gui` を起動する (`have_display`。[SPEC.md 2.1](SPEC.md#21-ディスプレイの判定-have_display))。最後の行はこれと同じ条件で、`KVM_HOST` だけは見ない
+   - **物理 GNOME**: `kvm.sh up` は実行ユーザーのセッション環境 (`DISPLAY` / `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR` / `XAUTHORITY`) を `kvm-gui` に持ち込む。SSH 越しや `sudo -i` のシェルでは `WAYLAND_DISPLAY` などが無く、`kvm-gui` は起動されない (`>> no display found`)
+   - **SELinux**: Enforcing のままでよい (`kvm` は `--privileged`、`kvm-gui` は `label=disable` でラベル分離が無効)
+   - **ディスプレイ無し**: `up` は `kvm` だけを起動し、GUI イメージはビルドしない。`up gui` と `viewer` は `!! no display found …` で終了する (それぞれ exit 1 / exit 2)。VM の作成・操作は `./kvm.sh virt-install` / `./kvm.sh virsh` で行い、ゲストにはシリアルコンソールやネットワーク経由でアクセスする ([VM の作成と操作](vm.md) の手順 4)
+   - **画面のあるホストで画面を使わない**: `KVM_HOST=headless` を `up` の前に付ける ([環境変数](#環境変数))。そのときは手順 5 の 2 つ目のブロックを貼らない
+   - **SSH のシェルの `XDG_RUNTIME_DIR`**: SSH でログインしても設定されるので、`env | grep` に出ることがある。画面の有無は `DISPLAY` / `WAYLAND_DISPLAY` で決まる
    - **起動前に確認されるホスト資源** (`check_host_network`): `KVM_BRIDGE` がブリッジでなければ停止、ホストに `virbr0` があれば警告 ([SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時))
 
    </details>
 
 1. **イメージをビルドする**
 
-   最初の `sudo podman` なので sudo のパスワードを聞かれる。時間がかかる (AlmaLinux 10 minimal のイメージ取得と `microdnf` でのパッケージ導入)。
+   `kvm` のイメージを作る。最初の `sudo podman` なので、sudo のパスワードを聞かれることがある。
 
    ```bash
-   cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh build
+   cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh build kvm
    ```
 
-   - ディスプレイの無いホストは `./kvm.sh build kvm` で `kvm` イメージだけを作る (GUI イメージは不要)
-   - `up` は足りないイメージを自動でビルドするので、この手順を飛ばして手順 5 に進んでもよい。分けてあるのは、ビルドの失敗と起動の失敗を切り分けるため
+   - 時間がかかる (AlmaLinux 10 minimal のイメージ取得と `microdnf` でのパッケージ導入)
    - **次のブロックはビルドが終わってから貼る**
+
+   画面のあるホストでは GUI のイメージも作る。画面の無いホストでは何もしない。
+
+   ```bash
+   [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || ./kvm.sh build gui
+   ```
+
+   - ビルドの最後に `Successfully tagged localhost/kvm-container/kvm:latest` (`gui` のときは `…/gui:latest`) が出ればよい
 
    <details>
    <summary>補足: ビルド</summary>
 
-   `Containerfile` は AlmaLinux 10 minimal ベース (`microdnf`) のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、両コンテナ共通の unit マスク) → `common` (`gui-user.service` = GUI ユーザーの起動時作成) → `kvm` / `gui`。`./kvm.sh build [kvm|gui]` は `podman build --target <role> -t localhost/kvm-container/<role>:latest` で、余分な引数は `podman build` に渡る。どちらのイメージも systemd (`/sbin/init`) で常駐する。イメージ名は固定 ([SPEC.md 3.4](SPEC.md#34-イメージ仕様-containerfile))。ビルドが失敗したら `./kvm.sh build kvm 2>&1 | tee build.log` のように出力を残す (`build.log` は `.gitignore` 済み)。
+   `Containerfile` は AlmaLinux 10 minimal ベース (`microdnf`) のマルチステージ: `base` (systemd、固定 gid の `libvirt` グループ、両コンテナ共通の unit マスク) → `common` (`gui-user.service` = GUI ユーザーの起動時作成) → `kvm` / `gui`。
+
+   - `./kvm.sh build [kvm|gui]` は `podman build --target <role> -t localhost/kvm-container/<role>:latest` で、余分な引数は `podman build` に渡る。引数なしの `./kvm.sh build` は両方を作る
+   - 2 つのブロックに分けたのは、画面の無いホストで GUI イメージを作らないため。判定は手順 4 の最後の行と同じ
+   - どちらのイメージも systemd (`/sbin/init`) で常駐する。イメージ名は固定 ([SPEC.md 3.4](SPEC.md#34-イメージ仕様-containerfile))
+   - `up` は足りないイメージを自動でビルドするので、この手順を飛ばしてもよい。分けてあるのは、ビルドの失敗と起動の失敗を切り分けるため
+   - ビルドが失敗したら `./kvm.sh build kvm 2>&1 | tee build.log` のように出力を残す (`build.log` は `.gitignore` 済み)
 
    </details>
 
@@ -102,10 +148,13 @@
    ./kvm.sh up
    ```
 
-   - 初回は `>> seeding …/data/var-libvirt from image …` のように `data/` の初期化が 3 回出る。`>> ready. VMs: …` が出れば `kvm` は起動している。ディスプレイがあれば続けて `>> kvm-gui started. VM screen: ./kvm.sh viewer [VM]` が出る
-   - ディスプレイの無いホストでは `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)` が出る。これは正常
-   - `!! /dev/kvm not found …` で止まったら、ファームウェアの SVM (AMD) / VT-x (Intel) を見直す (手順 3)
-   - `!! virbr0 already exists on the host …` は、ホスト自身で libvirt が動いているか、前回のコンテナの残骸。警告だけで `up` は止まらず `kvm` は起動してしまうので、残骸なら `./kvm.sh down` でコンテナを消し、`sudo ip link del virbr0` で消してから `up` し直す ([注意点](#注意点))
+   - 初回は `>> seeding …/data/var-libvirt from image …` のように `data/` の初期化が 3 回出る
+   - `>> ready. VMs: …` が出れば `kvm` は起動している
+   - 画面のあるホストでは、続けて `>> kvm-gui started. VM screen: ./kvm.sh viewer [VM]` が出る
+   - 画面の無いホストでは `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)` が出る。これで正常
+   - `!! /dev/kvm not found …` で止まったら、ファームウェアの SVM (AMD) / VT-x (Intel) を見直す
+   - `!! virbr0 already exists on the host …` は警告だけで、`kvm` は起動してしまう
+   - 前回のコンテナの残骸なら `./kvm.sh down` → `sudo ip link del virbr0` → `./kvm.sh up` の順にやり直す ([注意点](#注意点))
    - **次のブロックは `>> ready.` が出てから貼る**
 
    <details>
@@ -151,14 +200,19 @@
    ./kvm.sh virsh list --all                                # 空の一覧 (ヘッダだけ) で可
    ```
 
-   ディスプレイのあるホストではさらに:
+   画面のあるホストでは `kvm-gui` も確かめる。画面の無いホストでは `skip` と出るだけ。
 
    ```bash
-   sudo podman exec kvm-gui systemctl is-system-running                          # running
-   sudo podman exec kvm-gui runuser -u "$USER" -- virsh -c qemu:///system list   # 一般ユーザーが kvm-gui から kvm の libvirt に接続できること
+   if sudo podman container exists kvm-gui; then
+     sudo podman exec kvm-gui systemctl is-system-running                          # running
+     sudo podman exec kvm-gui runuser -u "$USER" -- virsh -c qemu:///system list   # 一般ユーザーが kvm-gui から kvm の libvirt に接続できること
+   else
+     echo 'kvm-gui が無い (画面なし): skip'
+   fi
    ```
 
-   `degraded` なら `./kvm.sh shell` (または `./kvm.sh shell gui`) で `systemctl --failed` を見る。ログは `./kvm.sh logs`。
+   - `degraded` なら `./kvm.sh shell` (`kvm-gui` は `./kvm.sh shell gui`) で `systemctl --failed` を見る
+   - ログは `./kvm.sh logs` (`kvm-gui` は `./kvm.sh logs gui`)
 
    <details>
    <summary>補足: 動作確認</summary>
@@ -176,14 +230,14 @@
 
 | サブコマンド | 用途 | 使う手順書 |
 |---|---|---|
-| `./kvm.sh build [kvm\|gui]` | 2 つのイメージをビルド (`localhost/kvm-container/kvm`、`localhost/kvm-container/gui`)。`build kvm` / `build gui` で片方だけ | 本書 [手順 4](#実施手順) |
-| `./kvm.sh up [kvm\|gui]` | `kvm` を起動し、ディスプレイがあれば `kvm-gui` も起動 (kvm モジュールのロードと `/dev/kvm` の権限調整も行う)。`up gui` は `kvm-gui` だけ (再ログイン後など。`up` は `kvm-gui` が別のセッション用なら作り直す) | 本書 [手順 5](#実施手順) / [表示先が変わったとき](#表示先が変わったとき-再ログイン後) |
+| `./kvm.sh build [kvm\|gui]` | 2 つのイメージをビルド (`localhost/kvm-container/kvm`、`localhost/kvm-container/gui`)。`build kvm` / `build gui` で片方だけ | 本書 [手順 5](#実施手順) |
+| `./kvm.sh up [kvm\|gui]` | `kvm` を起動し、ディスプレイがあれば `kvm-gui` も起動 (kvm モジュールのロードと `/dev/kvm` の権限調整も行う)。`up gui` は `kvm-gui` だけ (再ログイン後など。`up` は `kvm-gui` が別のセッション用なら作り直す) | 本書 [手順 6](#実施手順) / [表示先が変わったとき](#表示先が変わったとき-再ログイン後) |
 | `KVM_BRIDGE=br0 ./kvm.sh up` | VM をホストのブリッジ `br0` に接続できるようにして起動 | [bridge.md](bridge.md) |
 | `./kvm.sh virt-install ...` | VM を作る (`kvm` コンテナ内の virt-install) | [vm.md](vm.md) |
 | `./kvm.sh virsh ...` | virsh (`kvm` コンテナ)。`list` / `start` / `shutdown` / `destroy` / `undefine` など | [vm.md](vm.md) |
 | `./kvm.sh viewer [VM名]` | VM の画面を virt-viewer で表示 (VM 名を省くと一覧から選ぶダイアログ) | [vm.md](vm.md) |
-| `./kvm.sh shell [kvm\|gui]` | コンテナ内 root シェル (既定 `kvm`) | 本書 [手順 6](#実施手順) |
-| `./kvm.sh logs [kvm\|gui]` | libvirt の journal と GUI アプリのログ | 本書 [手順 6](#実施手順) |
+| `./kvm.sh shell [kvm\|gui]` | コンテナ内 root シェル (既定 `kvm`) | 本書 [手順 7](#実施手順) |
+| `./kvm.sh logs [kvm\|gui]` | libvirt の journal と GUI アプリのログ | 本書 [手順 7](#実施手順) |
 | `./kvm.sh down [kvm\|gui]` | コンテナ停止・削除 (VM のディスク / 定義はホストの `data/` に残る)。引数なしで両方 | 本書 [ロールバック](#ロールバック) |
 | `./kvm.sh clean` | コンテナと `data/` のデータをすべて削除 (確認あり) | 本書 [ロールバック](#ロールバック) |
 | `./kvm.sh install-desktop` | アクティビティ (アプリ一覧) から Virt Viewer を起動できるようにする | [desktop.md](desktop.md) |
@@ -195,40 +249,97 @@
 
 ## 表示先が変わったとき (再ログイン後)
 
-GNOME からログアウト / 再ログインしたり、ホスト側の `DISPLAY` 等を変えたりした場合は `up` を実行する。`kvm-gui` だけが作り直され、`kvm` と VM は動いたまま (`viewer` も同じことをしてから起動する)。再ログインで `/run/user/<uid>` は作り直されるが、`kvm-gui` は古い runtime dir をマウントしたまま中身だけ消えるので、`up` は渡した引数 (ラベル `kvm.gui-session`) とコンテナ内の Wayland ソケット / 認証ファイルの実在の両方を確かめて作り直す。
+GNOME からログアウト / 再ログインしたり、ホスト側の `DISPLAY` 等を変えたりした場合は `up` を実行する。
+
+- `kvm-gui` だけが作り直され、`kvm` と VM は動いたまま
+- `viewer` も同じことをしてから起動するので、`viewer` を使うだけならこの節は飛ばしてよい
+- 仕組み: 再ログインで `/run/user/<uid>` は作り直されるが、`kvm-gui` は古い runtime dir をマウントしたまま中身だけ消える。`up` は渡した引数 (ラベル `kvm.gui-session`) とコンテナ内の Wayland ソケット / 認証ファイルの実在の両方を確かめて作り直す
+
+GNOME の端末を開き、[手順 1](#実施手順) のブロックを貼ってから貼る。新しい端末なので、sudo のパスワードを聞かれる。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh up gui
+```
+
+- `>> the host session has changed: recreating kvm-gui (the kvm container and its VMs keep running)` が出る
+- 何も変わっていなければ `>> kvm-gui is already running`
+- 引数なしの `./kvm.sh up` でも同じ (`kvm` は `>> kvm is already running` で素通りする)
+- **次のブロックは `up` が終わってから貼る**
+
+```bash
 ./kvm.sh virsh list   # VM が動いたまま
 ```
 
-`>> the host session has changed: recreating kvm-gui (the kvm container and its VMs keep running)` が出る。何も変わっていなければ `>> kvm-gui is already running`。引数なしの `./kvm.sh up` でも同じ (`kvm` は `>> kvm is already running` で素通りする)。
-
 ## 更新
 
-通常の更新は `git pull` のあと `./kvm.sh down` → `./kvm.sh build` → `./kvm.sh up` (動いている VM は `down` で ACPI 停止する。この流れは本実行していない)。旧版から更新する場合は次のとおり。
+> [!WARNING]
+> **`down` が VM をシャットダウンしない版 (PR #26 より前) から更新するときは、先に VM を止めておく。** 止めないと、下の `down` で VM が電源断と同じ状態で止まる。
+>
+> - `./kvm.sh virsh list` で動いている VM を確かめ、[vm.md 手順 6](vm.md#実施手順) の `./kvm.sh virsh shutdown` で止める
 
-1. **`down` が VM をシャットダウンしない版から**: VM を止めてから `./kvm.sh down && ./kvm.sh build kvm && ./kvm.sh up` で `kvm` イメージを作り直す
-1. **cockpit / firefox を使っていた版から**: `./kvm.sh down && ./kvm.sh build && ./kvm.sh up` で両イメージを作り直す。`COCKPIT_BIND` / `COCKPIT_PORT` は使われなくなり、ホストの 9091 番で listen するものは無くなる。`data/` はそのまま使える。Firefox のランチャーを入れていた場合は `./kvm.sh install-desktop` (または `uninstall-desktop`) が古い `kvm-firefox.desktop` を消す
-1. **1 コンテナ構成の頃から**: `./kvm.sh down` で古い `kvm` コンテナを消してから `./kvm.sh build && ./kvm.sh up` する (古いコンテナは `/run/libvirt` を共有していないので、動いたままだと `kvm-gui` から libvirt に届かない)。古いイメージ `localhost/qemu-kvm-cockpit` は `sudo podman rmi localhost/qemu-kvm-cockpit` で消せる。`data/` はそのまま使える (`kvm-libvirt-conf.service` が libvirt の設定を更新する)
+旧版から更新するときは、ほかに次のことが起きる。どれも `data/` はそのまま使える。
+
+- **cockpit / firefox を使っていた版から**: `COCKPIT_BIND` / `COCKPIT_PORT` は使われなくなり、ホストの 9091 番で listen するものは無くなる。Firefox のランチャーを入れていた場合は、更新の後に `./kvm.sh install-desktop` (または `uninstall-desktop`) が古い `kvm-firefox.desktop` を消す ([desktop.md](desktop.md))
+- **1 コンテナ構成の頃から**: 下の `down` で古い `kvm` コンテナも消える。古いコンテナは `/run/libvirt` を共有していないので、動いたままだと `kvm-gui` から libvirt に届かない。libvirt の設定は `kvm-libvirt-conf.service` が更新する
+
+リポジトリを最新にする。
+
+```bash
+cd "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}" && git pull --ff-only
+```
+
+コンテナを止める。動いている VM は ACPI でシャットダウンされる (最大 120 秒)。
+
+```bash
+./kvm.sh down
+```
+
+**次のブロックは `down` が終わってから貼る。** イメージを作り直して起動する (画面の無いホストでは `gui` を作らない)。
+
+```bash
+./kvm.sh build kvm && { [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || ./kvm.sh build gui; } && ./kvm.sh up
+```
+
+- `>> ready.` が出れば終わり。確認は[手順 7](#実施手順)
+- 1 コンテナ構成の頃のイメージは、次のブロックで消せる (任意)
+
+```bash
+sudo podman rmi localhost/qemu-kvm-cockpit
+```
+
+- この節のブロックは、この形では本実行していない (以前は `git pull` → `./kvm.sh down` → `./kvm.sh build` → `./kvm.sh up` と書いていたが、その流れも本実行していない)
 
 ## ロールバック
 
-コンテナを止めて消す。動いている VM は先に ACPI でシャットダウンされる (`>> shutting down the running VMs (up to 120 s)...`。120 秒で電源断)。`data/` (VM のディスク・定義) は残り、`/run/kvm-container` は消える。
+コンテナを止めて消す。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh down
 ```
 
-VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶので、`data/` も消すときは `down` を先に貼らなくてもよい)。**ここから先は VM のディスク・定義が消える。**
+- 動いている VM は先に ACPI でシャットダウンされる (`>> shutting down the running VMs (up to 120 s)...`。120 秒で電源断)
+- `data/` (VM のディスク・定義) は残り、`/run/kvm-container` は消える
+- VM を止めるだけならここまで
+
+> [!CAUTION]
+> **次のブロックで `data/` ごと、VM のディスク・定義が消え、取り戻せない。**
 
 ```bash
 ./kvm.sh clean
 ```
 
-`This deletes the VM disks and definitions as well. Continue? [y/N]` に `y` と答える (`KVM_CLEAN_YES=1 ./kvm.sh clean` で省略できる)。`data/` ごと消える。
+- `This deletes the VM disks and definitions as well. Continue? [y/N]` に `y` と答える (`KVM_CLEAN_YES=1 ./kvm.sh clean` で省略できる)
+- `clean` は内部で `down` を呼ぶので、上の `down` を飛ばしてもよい
+- **次のブロックは、答えてから貼る**
 
-イメージも消すなら `sudo podman rmi localhost/kvm-container/kvm:latest localhost/kvm-container/gui:latest` (本実行していない)。ホストに入れた podman はそのまま残す。
+イメージも消す (本実行していない)。画面の無いホストには `gui` のイメージが無いが、`--ignore` で無視される。
+
+```bash
+sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-container/gui:latest
+```
+
+- ホストに入れた podman と git はそのまま残す
+- clone したリポジトリも要らなければ、`clean` の後に `cd ~ && rm -rf "${REPO}"` で消す (本実行していない)
 
 ---
 
@@ -236,9 +347,25 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 ### 対象と検証環境
 
-- **目的**: qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナに収め、qemu も libvirt も入れていない軽量なホストで VM を動かし、その画面をホストのデスクトップに表示する。VM の作成・操作はコマンドライン (`virt-install` / `virsh`)、画面の表示は virt-viewer (ブラウザや Web コンソールは使わない)。`kvm-gui` は `kvm` の libvirt に共有 unix ソケット経由で接続する。デスクトップの再ログイン後は `kvm-gui` だけを作り直せるので、VM を止めずに済む。ディスプレイの無いホストでは `kvm` だけを使う (GUI イメージのビルドも不要)
-- **進め方**: ホストに入れるのは podman だけ。`kvm.sh` が `sudo podman` でビルド・起動・停止をすべて行う。読者が書き換えるのは手順 1 の `REPO` だけ (既定の clone 先ならそれも不要)
-- **状態**: 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み (PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`。PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式)。**ディスプレイの無いホストは PR #28 で通した** (AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル。`build` → `KVM_HOST=headless` での `up` → 下の付録の確認一式 → `down` → `clean`)。**ただしそのホストでは VM を作っていない** (`virt-install` / `virsh console` は未実施)。手順 4 の `cd "${REPO:?…}" && ./kvm.sh build`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"` は README の例を変数形に書き換えたもので、その形では再実行していない。手順 1 の `ls -l "${REPO}/kvm.sh"`、手順 2 の `rpm -q podman`、手順 6 の `./kvm.sh virsh list --all`、「表示先が変わったとき」の `./kvm.sh up gui` のブロックは新規の確認行で本実行していない (手順 6 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
+- **目的**: qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナに収め、qemu も libvirt も入れていない軽量なホストで VM を動かし、その画面をホストのデスクトップに表示する
+  - VM の作成・操作はコマンドライン (`virt-install` / `virsh`)、画面の表示は virt-viewer (ブラウザや Web コンソールは使わない)
+  - `kvm-gui` は `kvm` の libvirt に共有 unix ソケット経由で接続する。デスクトップの再ログイン後は `kvm-gui` だけを作り直せるので、VM を止めずに済む
+  - ディスプレイの無いホストでは `kvm` だけを使う (GUI イメージのビルドも不要)
+- **進め方**: ホストに入れるのは podman と git だけ。clone した `kvm.sh` が `sudo podman` でビルド・起動・停止をすべて行う。読者が書き換える値は無い (clone 先を変えるときだけ手順 1 の `REPO`)
+- **状態**:
+  - 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
+    - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
+    - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
+  - **ディスプレイの無いホストは PR #28 で通した**
+    - AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル
+    - `build` → `KVM_HOST=headless` での `up` → 下の付録の確認一式 → `down` → `clean`
+    - **ただしそのホストでは VM を作っていない** (`virt-install` / `virsh console` は未実施)
+  - README の例を変数形に書き換えたもので、その形では再実行していない行:
+    - 手順 5 の `cd "${REPO:?…}" && ./kvm.sh build kvm`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"`
+  - 新しく足した行で、本実行していないもの:
+    - 手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定の行、手順 5 の `build gui` の判定
+    - 手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定 (手順 7 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
+    - 「表示先が変わったとき」「更新」の各ブロック、ロールバックの `rmi --ignore` とリポジトリの削除
 
 | 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
 |---|---|---|
@@ -255,15 +382,17 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 | 物理マシン / VM の AlmaLinux 10 + GNOME | GNOME (Wayland) デスクトップに表示 |
 | ディスプレイの無いホスト (SSH のみ) | 画面表示なし。VM の作成・操作は `./kvm.sh virt-install` / `./kvm.sh virsh` |
 
-> **注記**: 環境固有の値は**シェル変数**で書いてある。[手順 1](#実施手順) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
+> [!NOTE]
+> 環境固有の値は**シェル変数**で書いてある。[手順 1](#実施手順) で 1 度だけ設定すれば、以降のコマンドはそのまま貼って実行できる。
 >
 > | 変数 | 意味 | 例 |
 > |---|---|---|
-> | `${REPO}` | このリポジトリを clone した場所。`data/` はこの中にできる。ユーザーのホームディレクトリ配下にする | `~/kvm-container` |
+> | `${REPO}` | このリポジトリを clone する場所。`data/` はこの中にできる。ユーザーのホームディレクトリ配下にする | `~/kvm-container` |
+> | `${REPO_URL}` | このリポジトリの clone 元。公開リポジトリなので認証は要らない。固定 | `https://github.com/ryo-aoki-pc/kvm-container.git` |
 >
-> `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` / `KVM_SOFTWARE_GL` / `TZ` / `KVM_CLEAN_YES`) は手順 1 の変数ではなく、`KVM_BRIDGE=br0 ./kvm.sh up` のようにコマンドの前に付ける ([環境変数](#環境変数))。出力例・表の中の値は `<VM名>` / `<uid>` / `<ホストユーザー名>` のプレースホルダで書いてある。`<...>` を含むコマンドは bash のコードブロックに置いていない。
->
-> パスワード・鍵・トークンは扱わない。コンテナにはホストのパスワードもハッシュも渡していない (GUI ユーザーはロックされたまま)。
+> - `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` / `KVM_SOFTWARE_GL` / `TZ` / `KVM_CLEAN_YES`) は手順 1 の変数ではなく、`KVM_BRIDGE=br0 ./kvm.sh up` のようにコマンドの前に付ける ([環境変数](#環境変数))
+> - 出力例・表の中の値は `<VM名>` / `<uid>` / `<ホストユーザー名>` のプレースホルダで書いてある。`<...>` を含むコマンドは bash のコードブロックに置いていない
+> - パスワード・鍵・トークンは扱わない。コンテナにはホストのパスワードもハッシュも渡していない (GUI ユーザーはロックされたまま)
 
 手順書全体に関わる理由・実測・落とし穴と検証記録 (手順ごとのものは各手順の末尾の「補足」にある)。手順を実行するだけなら読まなくてよい。
 
@@ -272,12 +401,12 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 | 項目 | 状態 |
 |---|---|
 | ホスト OS | AlmaLinux 10 (物理 / VM)。qemu・libvirt・virt-viewer は未導入のままでよい |
-| podman | 未導入、または導入済み (root で使う) |
+| podman / git | 未導入、または導入済み (podman は root で使う) |
 | 仮想化支援 | KVM が使える CPU (SVM / VT-x が有効。VM の中で動かすならネストした仮想化) |
 | 画面 | GNOME (Wayland) のセッション。無ければ `kvm` だけを使う |
 | `/dev/kvm` | 無くてよい。`up` が `kvm_amd` / `kvm_intel` をロードして 0666 にする |
 | ホスト上の libvirt | 動いていないこと (`virbr0` / 192.168.122.0/24 が衝突する) |
-| リポジトリ | ユーザーのホームディレクトリ配下に clone 済み。`data/` はまだ無い |
+| リポジトリ | まだ clone していなくてよい (手順 3 で clone する)。clone 済みならユーザーのホームディレクトリ配下にあること。`data/` はまだ無い |
 
 ### 選択した方針
 
@@ -286,11 +415,24 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 | `kvm` | libvirt + qemu-kvm + virt-install (サーバ側。VM が動いている間は常駐) | `--privileged --network host` |
 | `kvm-gui` | virt-viewer (デスクトップ側。ディスプレイのあるホストだけ) | 非特権 (`--network host`, SELinux ラベル分離なし) |
 
-- **コマンドライン + virt-viewer**: VM の作成・操作は `kvm` コンテナ内の `virt-install` / `virsh` をパススルーし、画面は `kvm-gui` の virt-viewer で出す。ブラウザや Web コンソール (cockpit) は廃止した (PR #25)。RHEL 10 系の qemu-kvm には SPICE が無いので、グラフィックスは VNC ([vm.md](vm.md#選択した方針))
-- **`kvm` は `--privileged --network host`**: KVM、libvirt の `default` ネットワーク (NAT / dnsmasq)、ホストのブリッジへの接続のため。`kvm-gui` は非特権だが `--security-opt label=disable`。SELinux Enforcing のホストで、特権コンテナが作った unix ソケットへ接続し、ホストの runtime dir を読むため
-- **コンテナをまたぐ libvirt 接続**: `/run/libvirt` はホストの `/run/kvm-container/libvirt` (tmpfs) を両コンテナにバインドマウントしたもの。別コンテナからの接続では、デーモンが `SO_PEERCRED` で得る pid が 0 になる (pid 名前空間が違う) ため、libvirt 既定の polkit 認証は使えない。代わりに `auth_unix_rw = "none"` にし、ソケットの権限 (`root:libvirt 0660`) でアクセスを制限する。モジュラーデーモンは systemd のソケット活性化なので、権限は `/etc/libvirt/*.conf` の `unix_sock_*` ではなく `virt*d.socket` の drop-in (`container/kvm/virtd-socket.conf`) で決まる。`libvirt` グループの gid は両イメージで同じ値に固定し (Containerfile の `LIBVIRT_GID`)、`kvm-gui` 側のユーザーがこのグループでソケットに届くようにする。`/etc/libvirt` はホストの `data/etc-libvirt` で空のときしかイメージから初期化されないため、`auth_unix_rw` と qemu.conf の設定 (`security_driver = "none"`、`namespaces = []`) は `kvm` の起動時に `kvm-libvirt-conf.service` が毎回冪等に書き込む (既存の `data/` もそのまま使える)。詳細は [SPEC.md 3.5](SPEC.md#35-コンテナ間の-libvirt-接続) と [6 章](SPEC.md#6-設計上の不変条件)
-- **`sudo podman`**: `kvm.sh` は root の podman を `sudo` で呼ぶ (`PODMAN="sudo podman"` 固定)。`--privileged`、`--network host`、`/dev/kvm` の受け渡し、ホストの `/run` 配下のディレクトリ共有のため。利用者は `sudo` を付けずに `./kvm.sh` を実行する
-- **`data/` はバインドマウント**: リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントする。バインドマウントは named volume と違い初回にイメージ側の内容をコピーしないため、空のときだけ `kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([手順 5 の補足](#実施手順))
+- **コマンドライン + virt-viewer**: VM の作成・操作は `kvm` コンテナ内の `virt-install` / `virsh` をパススルーし、画面は `kvm-gui` の virt-viewer で出す
+  - ブラウザや Web コンソール (cockpit) は廃止した (PR #25)
+  - RHEL 10 系の qemu-kvm には SPICE が無いので、グラフィックスは VNC ([vm.md](vm.md#選択した方針))
+- **`kvm` は `--privileged --network host`**: KVM、libvirt の `default` ネットワーク (NAT / dnsmasq)、ホストのブリッジへの接続のため
+  - `kvm-gui` は非特権だが `--security-opt label=disable`。SELinux Enforcing のホストで、特権コンテナが作った unix ソケットへ接続し、ホストの runtime dir を読むため
+- **コンテナをまたぐ libvirt 接続**: `/run/libvirt` はホストの `/run/kvm-container/libvirt` (tmpfs) を両コンテナにバインドマウントしたもの。詳細は [SPEC.md 3.5](SPEC.md#35-コンテナ間の-libvirt-接続) と [6 章](SPEC.md#6-設計上の不変条件)
+  - 別コンテナからの接続では、デーモンが `SO_PEERCRED` で得る pid が 0 になる (pid 名前空間が違う)。そのため libvirt 既定の polkit 認証は使えない
+  - 代わりに `auth_unix_rw = "none"` にし、ソケットの権限 (`root:libvirt 0660`) でアクセスを制限する
+  - モジュラーデーモンは systemd のソケット活性化なので、権限は `/etc/libvirt/*.conf` の `unix_sock_*` ではなく `virt*d.socket` の drop-in (`container/kvm/virtd-socket.conf`) で決まる
+  - `libvirt` グループの gid は両イメージで同じ値に固定し (Containerfile の `LIBVIRT_GID`)、`kvm-gui` 側のユーザーがこのグループでソケットに届くようにする
+  - `/etc/libvirt` はホストの `data/etc-libvirt` で、空のときしかイメージから初期化されない。そのため `auth_unix_rw` と qemu.conf の設定 (`security_driver = "none"`、`namespaces = []`) は、`kvm` の起動時に `kvm-libvirt-conf.service` が毎回冪等に書き込む (既存の `data/` もそのまま使える)
+- **`sudo podman`**: `kvm.sh` は root の podman を `sudo` で呼ぶ (`PODMAN="sudo podman"` 固定)
+  - `--privileged`、`--network host`、`/dev/kvm` の受け渡し、ホストの `/run` 配下のディレクトリ共有のため
+  - 利用者は `sudo` を付けずに `./kvm.sh` を実行する
+- **`data/` はバインドマウント**: リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントする
+  - バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしない
+  - そのため空のときだけ、`kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([手順 6 の補足](#実施手順))
+- **分岐はブロックの中で判定する**: 画面の有無で変わるのは、GUI イメージのビルド (手順 5) と `kvm-gui` の確認 (手順 7) だけ。どちらもブロックの中で判定し、どちらのホストでも同じブロックを上から貼れるようにした
 
 ### 環境変数
 
@@ -310,7 +452,9 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 - `sudo podman ps` に `kvm` (イメージ `localhost/kvm-container/kvm:latest`) と、ディスプレイのあるホストでは `kvm-gui` (`localhost/kvm-container/gui:latest`) が `Up` で並ぶ。ディスプレイの無いホストは `kvm` だけ
 - `sudo ls "${REPO}/data"` は `etc-libvirt  home  var-libvirt` (root 所有)。`ls /run/kvm-container/libvirt` に libvirt のソケットが並ぶ
-- 両コンテナで `systemctl is-system-running` が `running`。`kvm` では `virtqemud` など libvirt のモジュラーデーモンがソケット活性化で待ち受け、`libvirt-guests.service` が有効。GUI ユーザー (ホストユーザーの写し) がロックされた状態で存在し、`/run/user/<uid>` と session bus がある
+- 両コンテナで `systemctl is-system-running` が `running`
+  - `kvm` では `virtqemud` など libvirt のモジュラーデーモンがソケット活性化で待ち受け、`libvirt-guests.service` が有効
+  - GUI ユーザー (ホストユーザーの写し) がロックされた状態で存在し、`/run/user/<uid>` と session bus がある
 - ホスト上に libvirt の `virbr0` (192.168.122.0/24)、dnsmasq、nftables のルールができる (`--network host`)
 - `./kvm.sh virsh list --all` は空 (VM は [vm.md](vm.md) で作る)
 
@@ -320,12 +464,16 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
 
 - **`kvm.sh` は一般ユーザーで実行する**。root で実行すると止まる (コンテナ内のユーザーをホストユーザーに合わせるため)
 - **再ログイン後は `up`**: GNOME からログアウト / 再ログインしたり、ホスト側の `DISPLAY` 等を変えた場合は `./kvm.sh up` を実行する。`kvm-gui` だけが作り直され、VM は動いたまま (`viewer` も同じことをしてから起動する)
-- **ホストを再起動・シャットダウンする前に `./kvm.sh down`**: VM はコンテナの中の qemu なので、`down` で VM を止めてからホストを止める。`down` は VM のシャットダウンを待つが、ホストの停止ではコンテナごと止められるため、VM が正常にシャットダウンできるとは限らない。`down` (と `clean`) は動いている VM を先に ACPI でシャットダウンし (`libvirt-guests.service`)、120 秒たっても止まらない VM (OS が無い、ACPI を無視するなど) は電源を切られる。`down` の時点で動いていた VM は次の `up` で起動しない (`up` で起動させたい VM には `virsh autostart` を設定する。[vm.md](vm.md))
+- **ホストを再起動・シャットダウンする前に `./kvm.sh down`**: VM はコンテナの中の qemu なので、`down` で VM を止めてからホストを止める
+  - `down` は VM のシャットダウンを待つが、ホストの停止ではコンテナごと止められるため、VM が正常にシャットダウンできるとは限らない
+  - `down` (と `clean`) は動いている VM を先に ACPI でシャットダウンする (`libvirt-guests.service`)。120 秒たっても止まらない VM (OS が無い、ACPI を無視するなど) は電源を切られる
+  - `down` の時点で動いていた VM は次の `up` で起動しない。`up` で起動させたい VM には `virsh autostart` を設定する ([vm.md](vm.md))
 - **`data/` は root 所有**: ホストから読み書きするには `sudo` がいる。SELinux Enforcing でも `:Z` は不要。`data/` を消すのは `clean` だけ (`down` では残る)
 - **ホストのネットワーク名前空間を共有する** (`--network host`、両コンテナ):
   - ホスト自身で libvirt を動かしていると `virbr0` / 192.168.122.0/24 が衝突する。`up` 時にホストに `virbr0` があると警告する (警告だけで `up` は止まらない。コンテナの異常終了で残った場合は `down` してから `sudo ip link del virbr0` で削除し、`up` し直す)
   - `kvm-gui` も `--network host` (virt-viewer が VM の VNC に届くため)。listen するものは無いので、ホストと衝突するポートやソケットは無い。`kvm` 側も VM の VNC (loopback) 以外にホストで listen するものは無い
-  - libvirt の `default` ネットワークの `virbr0`・dnsmasq・nftables ルールはホスト上に作られ、`net.ipv4.ip_forward=1` もホストに効く。コンテナ内の `iscsid.socket` / `iscsiuio.socket` (abstract unix ソケットがホストの `iscsid` と衝突して degraded になる) と NetworkManager (入るとホストの NIC を管理し始める) はマスクしている ([SPEC.md 4.5](SPEC.md#45-ネットワークとポート) / [6 章](SPEC.md#6-設計上の不変条件))
+  - libvirt の `default` ネットワークの `virbr0`・dnsmasq・nftables ルールはホスト上に作られ、`net.ipv4.ip_forward=1` もホストに効く
+  - コンテナ内の `iscsid.socket` / `iscsiuio.socket` (abstract unix ソケットがホストの `iscsid` と衝突して degraded になる) と NetworkManager (入るとホストの NIC を管理し始める) はマスクしている ([SPEC.md 4.5](SPEC.md#45-ネットワークとポート) / [6 章](SPEC.md#6-設計上の不変条件))
 - **壊しやすい不変条件** (いずれも実際の不具合を踏んだ結果。理由を理解せずに変えない。[SPEC.md 6 章](SPEC.md#6-設計上の不変条件)):
   - ホストの `XDG_RUNTIME_DIR` は `/run/host-xdg-runtime` に読み取り専用でマウントし、`/run/user/<uid>` には絶対にマウントしない
   - コンテナ内の `/run/user/<uid>` は logind が作る (GUI ユーザーを linger にして起動時から存在させる)
@@ -339,6 +487,9 @@ VM を止めるだけならここまで (`clean` は内部で `down` を呼ぶ�
   - GUI ユーザーはホストユーザーの写しでパスワード無し。`data/` は空のときだけ seed
 - **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は他の用途と紛れるため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
 - **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く。そのため `viewer` でも sudo のパスワードを聞かれることがある
+- **複数行のブロックの途中の sudo**: `./kvm.sh` は内部で `sudo podman` を呼ぶ。sudo のタイムスタンプが切れた状態で複数行のブロックを貼ると、途中でパスワードを聞かれ、残りの行がパスワードとして読まれるか捨てられる
+  - 新しい端末や長い待ち (ビルド・VM のインストール) の後は、先に `sudo -v` を単独で貼ってパスワードを入れておく
+  - 途中で聞かれてしまったら、Ctrl+C で止めてから `sudo -v` を貼り、そのブロックを貼り直す
 
 ### 参照
 
@@ -432,5 +583,5 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
-- ロールバックの `sudo podman rmi …` と、更新の 3 項目・`git pull` からの通常更新
-- 手順 1 / 2 / 6 の新規の確認行 (`ls -l "${REPO}/kvm.sh"`、`rpm -q podman`、`./kvm.sh virsh list --all`) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`
+- ロールバックの `sudo podman rmi --ignore …` とリポジトリの削除、更新の 3 項目と `git pull --ff-only` からの通常更新
+- 手順 1〜5・7 の新規の行 (手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定、手順 5 の `build gui` の判定、手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`
