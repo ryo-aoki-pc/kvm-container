@@ -5,8 +5,8 @@
 > [!IMPORTANT]
 > - **すべて対象ホストの一般ユーザーのシェルで実行する**。root や `sudo -i` のシェルでは、`kvm.sh` が `!! run kvm.sh as a regular user, not root` で止まる
 > - **画面を使うなら、GNOME にログインした端末から実行する**。SSH のシェルからでは `kvm-gui` が起動しない
-> - **手順 2 と、手順 5 の最初のブロックでは sudo のパスワードを聞かれる** (手順 2 は `[y/N]` も)。そのブロックだけ続けて貼らない
-> - **`./kvm.sh` は内部で `sudo podman` を呼ぶ**。sudo のタイムスタンプが切れていれば、ほかのブロックでも聞かれる。新しい端末や長い待ちの後は、先に `sudo -v` を単独で貼っておく ([注意点](#注意点))
+> - **ホストの `sudo` は、パスワードを聞かれずに実行できるようにしておく**。本書と他の 3 本は、どのブロックでも `sudo` が止まらない前提で書いてある。sudoers の設定は読者が行う (書き方は扱わない。権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
+> - **手順 2 には `[y/N]` の確認がある**。答えて、インストールが終わってから次のブロックを貼る
 
 - 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る。画面の有無による違いはブロックの中で判定するので、どちらのホストでも同じブロックを貼る
 - 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
@@ -46,7 +46,7 @@
    sudo dnf install podman git
    ```
 
-   sudo のパスワードと `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
+   `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
 
    ```bash
    rpm -q podman git
@@ -112,7 +112,7 @@
 
 1. **イメージをビルドする**
 
-   `kvm` のイメージを作る。最初の `sudo podman` なので、sudo のパスワードを聞かれることがある。
+   `kvm` のイメージを作る。
 
    ```bash
    cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh build kvm
@@ -255,7 +255,7 @@ GNOME からログアウト / 再ログインしたり、ホスト側の `DISPLA
 - `viewer` も同じことをしてから起動するので、`viewer` を使うだけならこの節は飛ばしてよい
 - 仕組み: 再ログインで `/run/user/<uid>` は作り直されるが、`kvm-gui` は古い runtime dir をマウントしたまま中身だけ消える。`up` は渡した引数 (ラベル `kvm.gui-session`) とコンテナ内の Wayland ソケット / 認証ファイルの実在の両方を確かめて作り直す
 
-GNOME の端末を開き、[手順 1](#実施手順) のブロックを貼ってから貼る。新しい端末なので、sudo のパスワードを聞かれる。
+GNOME の端末を開き、[手順 1](#実施手順) のブロックを貼ってから貼る。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh up gui
@@ -402,6 +402,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 |---|---|
 | ホスト OS | AlmaLinux 10 (物理 / VM)。qemu・libvirt・virt-viewer は未導入のままでよい |
 | podman / git | 未導入、または導入済み (podman は root で使う) |
+| ホストの `sudo` | 一般ユーザーがパスワード無しで `sudo` を実行できる (`podman` / `dnf` / `cp` / `nmcli` など手順書が使うすべて)。sudoers は読者が設定する (本書では扱わない) |
 | 仮想化支援 | KVM が使える CPU (SVM / VT-x が有効。VM の中で動かすならネストした仮想化) |
 | 画面 | GNOME (Wayland) のセッション。無ければ `kvm` だけを使う |
 | `/dev/kvm` | 無くてよい。`up` が `kvm_amd` / `kvm_intel` をロードして 0666 にする |
@@ -429,6 +430,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 - **`sudo podman`**: `kvm.sh` は root の podman を `sudo` で呼ぶ (`PODMAN="sudo podman"` 固定)
   - `--privileged`、`--network host`、`/dev/kvm` の受け渡し、ホストの `/run` 配下のディレクトリ共有のため
   - 利用者は `sudo` を付けずに `./kvm.sh` を実行する
+  - 手順書は `sudo` がパスワードを聞かない前提で書き、ブロックを分けるのは完了待ちや対話入力があるときだけにする (前提は[実施前の状態](#実施前の状態))
 - **`data/` はバインドマウント**: リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントする
   - バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしない
   - そのため空のときだけ、`kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([手順 6 の補足](#実施手順))
@@ -486,10 +488,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - `kvm` の停止では `libvirt-guests.service` が VM を先にシャットダウンし、`down` の待ち時間 (`KVM_STOP_TIMEOUT=180`) は `SHUTDOWN_TIMEOUT=120` より長くする
   - GUI ユーザーはホストユーザーの写しでパスワード無し。`data/` は空のときだけ seed
 - **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は他の用途と紛れるため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
-- **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く。そのため `viewer` でも sudo のパスワードを聞かれることがある
-- **複数行のブロックの途中の sudo**: `./kvm.sh` は内部で `sudo podman` を呼ぶ。sudo のタイムスタンプが切れた状態で複数行のブロックを貼ると、途中でパスワードを聞かれ、残りの行がパスワードとして読まれるか捨てられる
-  - 新しい端末や長い待ち (ビルド・VM のインストール) の後は、先に `sudo -v` を単独で貼ってパスワードを入れておく
-  - 途中で聞かれてしまったら、Ctrl+C で止めてから `sudo -v` を貼り、そのブロックを貼り直す
+- **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く
 
 ### 参照
 
@@ -502,8 +501,6 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 ### 付録: 物理 AlmaLinux 10 + GNOME での確認手順
 
 変更後の回帰確認。**先に [vm.md 手順 3](vm.md#実施手順) で VM を 1 つ作り、vm.md 手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #15 `ae650c0` (1 コンテナ構成) と PR #26 `ba2fee2` (現行)。以下のブロックは README にあった確認手順を記録どおりに分けたもので、`cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
-
-`up` で sudo のパスワードを聞かれたら答えてから続ける。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}"

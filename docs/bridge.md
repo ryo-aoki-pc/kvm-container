@@ -4,9 +4,9 @@
 
 > [!IMPORTANT]
 > - **物理マシン / VM の AlmaLinux 10 + GNOME (NetworkManager) で、一般ユーザーのシェルから実行する**。`sudo -i` した root のシェルでは `kvm.sh` が止まる
-> - **GNOME にログインした端末 (コンソール) から行う**。手順 2 の 3 つ目のブロックは NIC の接続をブリッジに切り替えるので、その NIC 越しの ssh は切れる
+> - **GNOME にログインした端末 (コンソール) から行う**。手順 2 の 2 つ目のブロックは NIC の接続をブリッジに切り替えるので、その NIC 越しの ssh は切れる
 > - **前提は[導入](setup.md)を通し、`./kvm.sh up` が動くこと**。ブリッジ自体はホスト側で作る (`kvm.sh` はホストのネットワーク設定を変更しない)
-> - **手順 2 と手順 3 では sudo のパスワードを聞かれる**。そのブロックだけ続けて貼らない
+> - **ホストの `sudo` はパスワードを聞かれない前提**。sudoers は読者が設定する ([導入の実施前の状態](setup.md#実施前の状態))
 
 - 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る
 - 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
@@ -59,15 +59,10 @@
 
 1. **ブリッジを作る (NetworkManager)**
 
-   物理 NIC をブリッジに収容し、IP はブリッジ側に持たせる。まずブリッジの接続を作る。sudo のパスワードを聞かれる (単独で貼る)。
+   物理 NIC をブリッジに収容し、IP はブリッジ側に持たせる。まず、ブリッジの接続と、NIC を収容する接続を作る。
 
    ```bash
    sudo nmcli connection add type bridge ifname "${BRIDGE:?手順 1 の BRIDGE が空のまま。手順 1 を貼り直す}" con-name "${BRIDGE}" ipv4.method auto
-   ```
-
-   **次のブロックは、パスワードを入れてから貼る。** NIC をブリッジに収容する接続を作る。
-
-   ```bash
    sudo nmcli connection add type bridge-slave ifname "${NIC:?手順 1 の NIC が空のまま。値を入れて貼り直す}" master "${BRIDGE}"
    ```
 
@@ -92,10 +87,9 @@
    <details>
    <summary>補足: nmcli でブリッジを作る</summary>
 
-   - 1 つ目のブロック: `type bridge` の接続 `${BRIDGE}` を作る (ifname と con-name を同じにする)。`ipv4.method auto` はブリッジが DHCP で IP を受ける設定
-   - 2 つ目のブロック: NIC を収容する `type bridge-slave` の接続を作る。接続名は指定していないので NetworkManager の既定 (`bridge-slave-<NIC>`) になる。1 つ目と分けたのは、sudo のパスワードの入力で 2 行目が食われないようにするため
-   - 3 つ目のブロック: NIC の元の接続を落とし、ブリッジを上げる。これで NIC は bridge-slave としてブリッジに付き、IP はブリッジ側に来る。その NIC 越しの ssh はここで切れる (`&&` の 2 つ目が走らずに終わることがあるので、コンソールから貼る)
-   - 4 つ目のブロックの `ls -d /sys/class/net/<ブリッジ名>/bridge` は、`kvm.sh` の `check_host_network` が `KVM_BRIDGE` をブリッジと判定する条件そのもの ([SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時))
+   - 1 つ目のブロック: 1 行目で `type bridge` の接続 `${BRIDGE}` を作り (ifname と con-name を同じにする。`ipv4.method auto` はブリッジが DHCP で IP を受ける設定)、2 行目で NIC を収容する `type bridge-slave` の接続を作る (接続名は指定していないので NetworkManager の既定 `bridge-slave-<NIC>` になる)
+   - 2 つ目のブロック: NIC の元の接続を落とし、ブリッジを上げる。これで NIC は bridge-slave としてブリッジに付き、IP はブリッジ側に来る。その NIC 越しの ssh はここで切れる (`&&` の 2 つ目が走らずに終わることがあるので、コンソールから貼る)
+   - 3 つ目のブロックの `ls -d /sys/class/net/<ブリッジ名>/bridge` は、`kvm.sh` の `check_host_network` が `KVM_BRIDGE` をブリッジと判定する条件そのもの ([SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時))
    - 無線 NIC はここでは使えない ([注意点](#無線-nic-は-l2-ブリッジできない))
 
    </details>
@@ -109,7 +103,7 @@
    ```
 
    - `kvm` が動いたままだと、次の `up` は `>> kvm is already running` で戻り、`bridged` は登録されない (この手順の補足)
-   - **次のブロックは `down` が終わってから貼る**。sudo のタイムスタンプが切れていればパスワードを聞かれる
+   - **次のブロックは `down` が終わってから貼る**
 
    ```bash
    KVM_BRIDGE="${BRIDGE:?手順 1 の BRIDGE が空のまま。手順 1 を貼り直す}" ./kvm.sh up
@@ -201,18 +195,13 @@ cd "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}" && ./
 ./kvm.sh virsh net-list      # bridged が消えている (default だけ)
 ```
 
-ホストのブリッジと bridge-slave を消す。コンソールから、このブロックだけを単独で貼る。sudo のパスワードを聞かれる。
+ホストのブリッジと bridge-slave を消し、NIC の元の接続を上げる。コンソールから、このブロックだけを単独で貼る (ブリッジを消してから NIC に IP が戻るまでは通信できないので、2 行を続けて実行する)。
 
 - `NIC_CON` は手順 1 で控えた元の接続名。新しいシェルなら、手順 1 を貼り直さずに `NIC_CON=` で控えた名前を入れてから貼る (手順 1 を貼り直すと `bridge-slave-…` の名前になる)
 - bridge-slave の接続名は NetworkManager の既定 (`bridge-slave-<NIC>`)。違っていれば `nmcli connection show` で確かめる
 
 ```bash
 sudo nmcli connection delete "${BRIDGE:?手順 1 の BRIDGE が空のまま。手順 1 を貼り直す}" "bridge-slave-${NIC:?手順 1 の NIC が空のまま。値を入れて貼り直す}"
-```
-
-**次のブロックは、パスワードを入れて削除が終わってから貼る。** NIC の元の接続を上げる (ここでブリッジは消えているので、NIC に IP が戻るまで通信できない)。
-
-```bash
 sudo nmcli connection up "${NIC_CON:?手順 1 で控えた元の接続名を NIC_CON に入れてから貼る}"
 ```
 
@@ -234,6 +223,7 @@ sudo nmcli connection up "${NIC_CON:?手順 1 で控えた元の接続名を NIC
   - **手順 2 の nmcli 手順も物理ホストで本実行していない** (物理 AlmaLinux 10.2 + GNOME での通しの確認 PR #15 `ae650c0` は NIC が無線のみで `KVM_BRIDGE` を試していない)
   - README の例を変数形に書き換えたもので、その形では再実行していない行: 手順 1 の `NIC_CON` の式 (`awk -F: -v d="${NIC}" '$2==d{print $1}'`)、手順 2 の nmcli 行、手順 3 の `KVM_BRIDGE="${BRIDGE}" ./kvm.sh up`
   - 新規の確認行で本実行していないもの: 手順 1 の読み戻しと `cd`、手順 2 の `ip -br addr show` / `ls -d`、手順 3 の `./kvm.sh down kvm`、手順 4 の `net-dumpxml`、手順 5 の `domiflist`、ロールバックの各ブロック (手順 4 の `net-list` は README にあった行)
+  - 手順 2 とロールバックの nmcli は、`sudo` がパスワードを聞かない前提に合わせて 1 ブロック 2 行の形にした (この形でも本実行していない)
 
 | 項目 | 値 |
 |---|---|
@@ -334,6 +324,6 @@ Wi-Fi の NIC は (4 アドレス形式などの例外を除き) 自分以外の
 - 物理ホストのブリッジに `--network network=bridged` (vm.md の `VM_NETWORK=bridged`) でつないだ VM が LAN の DHCP から IP を取ること、手順 5 の `domiflist` の出力
 - `KVM_BRIDGE` を付けた `up` で `bridged` が登録されること、`KVM_BRIDGE` 無しの `up` で削除されること (実行記録なし)
 - `bridged` につないだ VM が定義されたまま `KVM_BRIDGE` 無しで `up` したときの挙動 (`bridged` の削除が失敗するか、VM の起動が失敗するか)
-- ロールバックの nmcli (`connection delete` と元の接続の `up`) と、`KVM_BRIDGE` 無しの `up` で `bridged` が消えるところ (README には書かれていたが本書の形では再実行していない)
+- ロールバックの nmcli (`connection delete` と元の接続の `up`。1 ブロック 2 行の形) と、`KVM_BRIDGE` 無しの `up` で `bridged` が消えるところ (README には書かれていたが本書の形では再実行していない)
 - `export KVM_BRIDGE=br0` にしたときの `viewer` / `up` の挙動
 - 既存 VM の `bridged` → `default` の付け替え手順
