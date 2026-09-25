@@ -6,7 +6,7 @@
 > - **[導入](setup.md)を通したホストで、一般ユーザーのシェルから実行する**。前提は `./kvm.sh virsh list` が通ること ([導入の手順 7](setup.md#実施手順))。`sudo -i` した root のシェルでは `kvm.sh` が止まる
 > - **インストールに使う ISO は、先にホストにダウンロードしておく** (手順 1 でそのパスを入れる)
 > - **手順 4 はホストのデスクトップにウィンドウが開く**。GNOME にログインした端末から行い、ウィンドウの中でインストールを進める。ディスプレイの無いホストでは画面は出ない (手順 4 の注意)
-> - **手順 2 では sudo のパスワードを聞かれる**。`./kvm.sh` は内部で `sudo podman` を呼ぶので、タイムスタンプが切れていればほかのブロックでも聞かれる。長い待ちの後に貼る手順 5 は、先に `sudo -v` を貼る
+> - **ホストの `sudo` はパスワードを聞かれない前提**。sudoers は読者が設定する ([導入の実施前の状態](setup.md#実施前の状態))
 
 - 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る
 - 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
@@ -58,13 +58,13 @@
 
 1. **ISO を置く**
 
-   `sudo` のパスワードを聞かれる (単独で貼る)。
+   ISO の大きさによっては時間がかかる (単独で貼る)。
 
    ```bash
    sudo cp "${ISO:?手順 1 の ISO が空のまま。値を入れて貼り直す}" data/var-libvirt/images/
    ```
 
-   **次のブロックは、パスワードを入れて `cp` が終わってから貼る。**
+   **次のブロックは `cp` が終わってから貼る。**
 
    ```bash
    sudo ls -l data/var-libvirt/images/   # ISO が root 所有で置かれている
@@ -128,14 +128,6 @@
 
 1. **動作確認する**
 
-   インストールで時間がたっているので、先に sudo のパスワードを入れておく (単独で貼る)。
-
-   ```bash
-   sudo -v
-   ```
-
-   **次のブロックは、パスワードを入れてから貼る。**
-
    ```bash
    ./kvm.sh virsh list --all                       # VM_NAME の行がある (インストール完了後は shut off)
    ./kvm.sh virsh domblklist "${VM_NAME}"          # vda = /var/lib/libvirt/images/${VM_NAME}.qcow2。sda はインストール中は ISO、終了後は空 (-)
@@ -145,7 +137,6 @@
    <details>
    <summary>補足: 動作確認</summary>
 
-   - `sudo -v` は sudo のタイムスタンプを更新するだけ。インストールの間にタイムスタンプが切れていると、このブロックの途中でパスワードを聞かれ、残りの行が流れない ([導入の注意点](setup.md#注意点))
    - `domblklist` は削除の前にも使う。ディスクのターゲット名 (`vda` など) と CD-ROM (`sda`) の中身が分かる
    - ディスクファイルは `data/var-libvirt/images/<VM名>.qcow2`。`sudo ls -l` で所有者が root / qemu になっているのは仕様 (手順 2 の補足)
 
@@ -253,7 +244,7 @@ sudo rm "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す
   - 物理 AlmaLinux 10.2 + GNOME、SELinux Enforcing で、作成 → 起動 → `viewer` → `reboot` → `shutdown` → `suspend` / `resume` → `destroy` → 稼働中の `down kvm` → `autostart` → `undefine --nvram --storage vda` の一式を通した (PR #26。[付録](#付録-vm-のライフサイクルの確認手順))
   - **ただしそのときの作成は `--location` + キックスタート形で、`--network` も省いていた。** 手順 3 の `--cdrom` 形は README の例を変数形に書き換え、`--network "network=${VM_NETWORK}"` を足したもので、その形では再実行していない
   - 手順 2・5・6 と「VM を削除する」の各行も README の例を変数形に書き換えたもので、その形では再実行していない
-  - 新しく足した行で、本実行していないもの: 手順 1 の `VM_NETWORK` と `cd`、手順 5 の `sudo -v` と `sudo ls -l`、手順 6 の `domstate`、削除の `change-media --eject --config`・`shutdown` と `domstate` のブロック・ISO の `sudo rm` (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)
+  - 新しく足した行で、本実行していないもの: 手順 1 の `VM_NETWORK` と `cd`、手順 5 の `sudo ls -l`、手順 6 の `domstate`、削除の `change-media --eject --config`・`shutdown` と `domstate` のブロック・ISO の `sudo rm` (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)
   - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` / `virsh console`) は未検証。そこで確認したのは `up` 〜 `down` だけ ([導入](setup.md#対象と検証環境))
 
 | 項目 | 値 |
@@ -423,5 +414,5 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 - 手順 3 の `--network "network=${VM_NETWORK}"` (`default` / `bridged` のどちらも。検証記録は `--network` を省いた形だけ)
 - 「VM を削除する」の `change-media --eject --config`、`shutdown` と `domstate` のブロック、ISO の `sudo rm`
 - ディスプレイ無しのホストでの `./kvm.sh virsh console` (ISO のインストーラがシリアルに出るかも含む)
-- 手順 1 の `cd`、手順 5・6 の変数形の行と、`sudo -v` / `sudo ls -l` / `domstate` の新規行
+- 手順 1 の `cd`、手順 5・6 の変数形の行と、`sudo ls -l` / `domstate` の新規行
 - 「完了時点の状態」の出力例 (表示形式から組み立てたもので、そのまま取った実測ではない)

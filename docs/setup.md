@@ -5,8 +5,8 @@
 > [!IMPORTANT]
 > - **すべて対象ホストの一般ユーザーのシェルで実行する**。root や `sudo -i` のシェルでは、`kvm.sh` が `!! run kvm.sh as a regular user, not root` で止まる
 > - **画面を使うなら、GNOME にログインした端末から実行する**。SSH のシェルからでは `kvm-gui` が起動しない
-> - **手順 2 と、手順 5 の最初のブロックでは sudo のパスワードを聞かれる** (手順 2 は `[y/N]` も)。そのブロックだけ続けて貼らない
-> - **`./kvm.sh` は内部で `sudo podman` を呼ぶ**。sudo のタイムスタンプが切れていれば、ほかのブロックでも聞かれる。新しい端末や長い待ちの後は、先に `sudo -v` を単独で貼っておく ([注意点](#注意点))
+> - **ホストの `sudo` は、パスワードを聞かれずに実行できるようにしておく**。本書と他の 3 本は、どのブロックでも `sudo` が止まらない前提で書いてある。sudoers の設定は読者が行う (書き方は扱わない。権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
+> - **手順 2 には `[y/N]` の確認がある**。答えて、インストールが終わってから次のブロックを貼る
 
 - 手順 1 で変数を設定したシェルで、上から順にコードブロックを貼る。画面の有無による違いはブロックの中で判定するので、どちらのホストでも同じブロックを貼る
 - 各手順の末尾の「補足」(折り畳み) と後半の[補足](#補足)は、実行するだけなら読まなくてよい。折り畳みの中のブロックも貼らなくてよい
@@ -46,7 +46,7 @@
    sudo dnf install podman git
    ```
 
-   sudo のパスワードと `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
+   `[y/N]` の確認がある。**次のブロックはインストールが終わってから貼る。**
 
    ```bash
    rpm -q podman git
@@ -112,7 +112,7 @@
 
 1. **イメージをビルドする**
 
-   `kvm` のイメージを作る。最初の `sudo podman` なので、sudo のパスワードを聞かれることがある。
+   `kvm` のイメージを作る。
 
    ```bash
    cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh build kvm
@@ -255,7 +255,7 @@ GNOME からログアウト / 再ログインしたり、ホスト側の `DISPLA
 - `viewer` も同じことをしてから起動するので、`viewer` を使うだけならこの節は飛ばしてよい
 - 仕組み: 再ログインで `/run/user/<uid>` は作り直されるが、`kvm-gui` は古い runtime dir をマウントしたまま中身だけ消える。`up` は渡した引数 (ラベル `kvm.gui-session`) とコンテナ内の Wayland ソケット / 認証ファイルの実在の両方を確かめて作り直す
 
-GNOME の端末を開き、[手順 1](#実施手順) のブロックを貼ってから貼る。新しい端末なので、sudo のパスワードを聞かれる。
+GNOME の端末を開き、[手順 1](#実施手順) のブロックを貼ってから貼る。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}" && ./kvm.sh up gui
@@ -356,6 +356,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
     - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
     - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
+    - `0cab212` (現行版): 手順 5 の 2 ブロック → 手順 6 → 手順 7 の 2 ブロック →「表示先が変わったとき」の `up gui` → 付録の確認行 (`auth_unix_rw` / `getent shadow` / `/dev/dri` / `ausearch`) → `KVM_HOST=headless` での `up gui` / `viewer` の拒否 (exit 1 / 2) → `down` (`virbr0` と `/run/kvm-container` が残らない) → `clean`。clone 先は `~/kvm-container` 以外 (git の worktree)、`viewer` と VM は未実施
   - **ディスプレイの無いホストは PR #28 で通した**
     - AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル
     - `build` → `KVM_HOST=headless` での `up` → 下の付録の確認一式 → `down` → `clean`
@@ -363,14 +364,13 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - README の例を変数形に書き換えたもので、その形では再実行していない行:
     - 手順 5 の `cd "${REPO:?…}" && ./kvm.sh build kvm`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"`
   - 新しく足した行で、本実行していないもの:
-    - 手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定の行、手順 5 の `build gui` の判定
-    - 手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定 (手順 7 の他の行は付録の確認手順から抜き出したもの。`$USER` をクォートした以外は同じ)
-    - 「表示先が変わったとき」「更新」の各ブロック、ロールバックの `rmi --ignore` とリポジトリの削除
+    - 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install` (`rpm -q podman git` は実行した)、手順 3 の `git clone` (既に clone 済みのホストなので判定で飛ばした)
+    - 「更新」の各ブロック、ロールバックの `rmi --ignore` とリポジトリの削除
 
 | 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
 |---|---|---|
 | ホスト | AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD x86_64 | AlmaLinux 10.2 (Raspberry Pi 5、aarch64)、SELinux Enforcing、podman 5.8.2、グラフィカルセッション外のシェル (`DISPLAY` / `WAYLAND_DISPLAY` 未設定) |
-| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成) | PR #28 (現行の 2 コンテナ構成) |
+| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成)、`0cab212` (手順 5〜7 と `down` / `clean`) | PR #28 (現行の 2 コンテナ構成) |
 | 画面表示 | GNOME (Wayland) デスクトップ | 無し (`>> no display found: GUI disabled ...`) |
 | VM の作成・操作 | ライフサイクル一式 (PR #26。[vm.md](vm.md)) | 未実施 (`virsh list` が通るところまで) |
 | `KVM_BRIDGE` | 未検証 (NIC が無線のみ) | 未検証 |
@@ -402,6 +402,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 |---|---|
 | ホスト OS | AlmaLinux 10 (物理 / VM)。qemu・libvirt・virt-viewer は未導入のままでよい |
 | podman / git | 未導入、または導入済み (podman は root で使う) |
+| ホストの `sudo` | 一般ユーザーがパスワード無しで `sudo` を実行できる (`podman` / `dnf` / `cp` / `nmcli` など手順書が使うすべて)。sudoers は読者が設定する (本書では扱わない) |
 | 仮想化支援 | KVM が使える CPU (SVM / VT-x が有効。VM の中で動かすならネストした仮想化) |
 | 画面 | GNOME (Wayland) のセッション。無ければ `kvm` だけを使う |
 | `/dev/kvm` | 無くてよい。`up` が `kvm_amd` / `kvm_intel` をロードして 0666 にする |
@@ -429,6 +430,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 - **`sudo podman`**: `kvm.sh` は root の podman を `sudo` で呼ぶ (`PODMAN="sudo podman"` 固定)
   - `--privileged`、`--network host`、`/dev/kvm` の受け渡し、ホストの `/run` 配下のディレクトリ共有のため
   - 利用者は `sudo` を付けずに `./kvm.sh` を実行する
+  - 手順書は `sudo` がパスワードを聞かない前提で書き、ブロックを分けるのは完了待ちや対話入力があるときだけにする (前提は[実施前の状態](#実施前の状態))
 - **`data/` はバインドマウント**: リポジトリ内の `data/` (git 管理外) 配下のディレクトリをコンテナにバインドマウントする
   - バインドマウントは named volume と違い、初回にイメージ側の内容をコピーしない
   - そのため空のときだけ、`kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([手順 6 の補足](#実施手順))
@@ -486,10 +488,7 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
   - `kvm` の停止では `libvirt-guests.service` が VM を先にシャットダウンし、`down` の待ち時間 (`KVM_STOP_TIMEOUT=180`) は `SHUTDOWN_TIMEOUT=120` より長くする
   - GUI ユーザーはホストユーザーの写しでパスワード無し。`data/` は空のときだけ seed
 - **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は他の用途と紛れるため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
-- **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く。そのため `viewer` でも sudo のパスワードを聞かれることがある
-- **複数行のブロックの途中の sudo**: `./kvm.sh` は内部で `sudo podman` を呼ぶ。sudo のタイムスタンプが切れた状態で複数行のブロックを貼ると、途中でパスワードを聞かれ、残りの行がパスワードとして読まれるか捨てられる
-  - 新しい端末や長い待ち (ビルド・VM のインストール) の後は、先に `sudo -v` を単独で貼ってパスワードを入れておく
-  - 途中で聞かれてしまったら、Ctrl+C で止めてから `sudo -v` を貼り、そのブロックを貼り直す
+- **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く
 
 ### 参照
 
@@ -502,8 +501,6 @@ sudo podman rmi --ignore localhost/kvm-container/kvm:latest localhost/kvm-contai
 ### 付録: 物理 AlmaLinux 10 + GNOME での確認手順
 
 変更後の回帰確認。**先に [vm.md 手順 3](vm.md#実施手順) で VM を 1 つ作り、vm.md 手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #15 `ae650c0` (1 コンテナ構成) と PR #26 `ba2fee2` (現行)。以下のブロックは README にあった確認手順を記録どおりに分けたもので、`cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
-
-`up` で sudo のパスワードを聞かれたら答えてから続ける。
 
 ```bash
 cd "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}"
@@ -584,4 +581,5 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの `sudo podman rmi --ignore …` とリポジトリの削除、更新の 3 項目と `git pull --ff-only` からの通常更新
-- 手順 1〜5・7 の新規の行 (手順 1 の `REPO_URL` と `cd`、手順 2 の `git` と `rpm -q podman git`、手順 3 の clone、手順 4 の画面の判定、手順 5 の `build gui` の判定、手順 7 の `./kvm.sh virsh list --all` と `kvm-gui` の判定) と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list`
+- 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install`、手順 3 の `git clone` (他の新規の行と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
+- `~/kvm-container` に clone したホストでの通し (`0cab212` の実行は git の worktree を clone 先にしたもの)

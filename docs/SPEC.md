@@ -130,8 +130,8 @@ flowchart TD
 | 要件 | 振る舞い |
 | --- | --- |
 | root で実行しない | `host_user_args` が uid 0 を検出すると `!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)` で exit 1。`install-desktop` / `uninstall-desktop` も root を拒否する |
-| `sudo` が使える | `podman`、`modprobe`、`chmod /dev/kvm`、`data/` と `/run/kvm-container` の操作に使う |
-| `launch` (Activities から起動) を使う場合 | パスワード無しで `sudo podman` を実行できる sudoers 設定が必要 (`sudo -n` で実行するため。4.7 節) |
+| `sudo` がパスワード無しで使える | `podman`、`modprobe`、`chmod /dev/kvm`、`data/` と `/run/kvm-container` の操作に使う。手順書はどのブロックでも `sudo` が止まらない前提で書いてある (sudoers の設定は利用者の責任で、本書はその書き方を定義しない) |
+| `launch` (Activities から起動) | 端末が無くパスワードを入力できないので `sudo -n podman` を使う。上の前提が満たされていなければ起動せず、失敗はデスクトップ通知になる (4.7 節) |
 
 ### 2.4 起動前に確認されるホスト資源 (`check_host_network`、`kvm` の起動時)
 
@@ -400,7 +400,7 @@ flowchart LR
 | `virsh ...` | virsh の引数 | `kvm` 起動中 | `podman exec -it kvm virsh -c qemu:///system "$@"` | virsh の終了コード |
 | `shell [kvm\|gui]` | ロール省略で `kvm` | 起動中 | `podman exec -it <container> bash` | bash の終了コード |
 | `logs [kvm\|gui]` | ロール省略で両方 | | `kvm`: 起動中なら `journalctl --no-pager -n 30 -u kvm-libvirt-conf -u virtqemud -u gui-user`、でなければ `>> kvm is not running`。`gui`: 起動中なら `/var/log/gui.log` 末尾 50 行 + `journalctl -n 30 -u gui-user`、でなければ `>> kvm-gui is not running` | |
-| `launch <app>` | `virt-viewer` | `.desktop` から呼ばれる。podman の NOPASSWD sudo | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
+| `launch <app>` | `virt-viewer` | `.desktop` から呼ばれる。パスワード無しの `sudo podman` (2.3 節) | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
 | `install-desktop` | 無し | root 以外、デスクトップにログインしたユーザー | `gui` イメージが無ければ `build gui`。アイコン抽出と `.desktop` 配置 (4.7 節) | 0 |
 | `uninstall-desktop` | 無し | root 以外 | `.desktop` とアイコンを削除 | 0 |
 
@@ -652,6 +652,7 @@ sequenceDiagram
 
 図 13: `.desktop` からの起動経路。端末が無く sudo のパスワードを入力できないため `sudo -n` を使い、失敗理由はデスクトップ通知で伝える。
 `launch` は `kvm.sh viewer` と違って `up` を経由しないので、コンテナが止まっていれば通知で `./kvm.sh up` を案内する。
+2.3 節の前提 (パスワード無しの `sudo`) が満たされていれば、sudo がパスワードを要求する分岐には入らない。
 
 | 項目 | 仕様 |
 | --- | --- |
@@ -661,7 +662,7 @@ sequenceDiagram
 | アイコン抽出 | `gui` イメージの一時コンテナ (`--rm --network none`) で `/usr/share/icons/hicolor` から `apps/virt-viewer.*` だけを `tar` で取り出す。失敗しても続行 (汎用アイコンになる旨を表示) |
 | 旧エントリの掃除 | `install-desktop` / `uninstall-desktop` は、以前のリビジョンが入れた `kvm-virt-manager.desktop` / `kvm-firefox.desktop` と `icons/hicolor/*/apps/{virt-manager,firefox}.*` を削除する (`remove_legacy_desktop`) |
 | 後処理 | `update-desktop-database -q` (あれば)。配置先と Activities での検索語を表示 |
-| `launch` の前提 | 実行ユーザーが `sudo -n podman` を実行できること。`launch` は `virt-viewer` 以外を拒否する |
+| `launch` の前提 | 実行ユーザーが `sudo -n podman` を実行できること (2.3 節の前提)。`launch` は `virt-viewer` 以外を拒否する |
 | 通知 | `notify-send -a kvm.sh -i dialog-error "kvm-container" "<本文>"` → 無ければ `zenity --error --title=kvm-container --text=<本文>` → どちらも無ければ stderr のみ |
 | 解除 | `uninstall-desktop` が `.desktop` と `icons/hicolor/*/apps/virt-viewer.*` を削除 |
 
@@ -995,7 +996,7 @@ flowchart LR
 | `kvm-gui` の権限 | 非特権 (`--privileged` 無し、capability の追加無し)、`--security-opt label=disable`、`--network host`、`--device /dev/dri` | ホストのデスクトップに接続する GUI アプリを特権コンテナから切り離す。SELinux のラベル分離は無いので、ホスト側からは通常の非特権コンテナ相当 |
 | libvirt へのアクセス制御 | polkit ではなくソケットの所有グループ (`root:libvirt 0660`) と `auth_unix_rw = "none"`。両コンテナの GUI ユーザーが `libvirt` グループ | `libvirt` グループ (gid 985) に入れるプロセスは誰でも `qemu:///system` を完全に操作できる。gid 985 を持つホスト側のプロセスも `/run/kvm-container/libvirt` 経由で届く |
 | GUI ユーザーのパスワード | 設定しない (`useradd` のままロック)。ホストのパスワードやハッシュはコンテナに渡さない。sudoers も無い | コンテナにログインする経路は無い (操作は `sudo podman exec` = ホスト root 相当) |
-| ホスト側の sudo | `launch` (Activities 起動) だけが `sudo -n podman` を要求する。通常の `kvm.sh` は対話的な `sudo` | podman の NOPASSWD sudo はホスト root 相当の権限付与になる。設定は利用者の判断 |
+| ホスト側の sudo | `kvm.sh` は `sudo podman` を使い、`launch` (Activities 起動) は端末が無いので `sudo -n`。手順書はホストの `sudo` がパスワード無しである前提 (2.3 節) で、sudoers の書き方は文書化しない | podman の NOPASSWD sudo はホスト root 相当の権限付与になる。設定は利用者の判断 |
 | libvirt / qemu | `security_driver = "none"`、`namespaces = []`。`/dev/kvm` `/dev/net/tun` は 0666、`kvm-gui` の `/dev/dri/renderD*` も 0666 | VM 間の SELinux / namespace 隔離は無い |
 | ホストのセッション資源 | `kvm-gui` にのみ、runtime dir と `/tmp/.X11-unix` と Xauthority を読み取り専用で渡す | GUI アプリはホストのコンポジタに接続できる (画面・入力にアクセス可能) が、ホストのソケットを消したり作り直したりはできない |
 | `data/` | root / qemu 所有。`clean` で削除 (確認あり、`KVM_CLEAN_YES=1` で省略)。`kvm-gui` からは `home` だけが見える (rw) | VM ディスクと定義はホストのファイルシステムに平文で置かれる |
@@ -1070,7 +1071,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done` | どちらも `running` (`degraded` ではない) | Containerfile の unit マスク群が効いている **(実質的な回帰テスト)** |
 | `sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock` | `srw-rw---- root libvirt` | `virtd-socket.conf` の drop-in |
 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` | VM 一覧が出る | コンテナをまたぐ libvirt 接続 **(回帰テスト)** |
-| `sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf` | すべて `"none"` | `kvm-libvirt-conf.service` |
+| `sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"` | すべて `"none"` | `kvm-libvirt-conf.service` |
 | `sudo podman exec kvm getent shadow $USER` | 第 2 フィールドが `!` | GUI ユーザーがロックされている (パスワードを渡していない) |
 | `sudo podman exec kvm-gui ls -la /dev/dri` | `renderD*` が 0666 | `--device /dev/dri` と `gui` の chmod |
 | `sudo ausearch -m avc -ts recent` | 拒否が無い | SELinux 上の問題が無い |
@@ -1092,7 +1093,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `sudo podman exec kvm systemctl is-system-running` | `running` (`degraded` ではない) | Containerfile の unit マスク群 **(実質的な回帰テスト)** |
 | `sudo podman ps` | `kvm` だけで `kvm-gui` が居ない | GUI コンテナを起動していない |
 | `sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock` | `srw-rw---- root libvirt` | `virtd-socket.conf` の drop-in |
-| `sudo grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf` | すべて `"none"` | `kvm-libvirt-conf.service` |
+| `sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"` | すべて `"none"` | `kvm-libvirt-conf.service` |
 | `sudo podman exec kvm getent shadow $USER` | 第 2 フィールドが `!` | GUI ユーザーがロックされている (`kvm` にも GUI ユーザーは作られる) |
 | `./kvm.sh virsh list --all` | 一覧が出る (VM が無ければヘッダだけ) | `kvm` の libvirt に `podman exec` で届く |
 | `ip -br addr show virbr0` | `192.168.122.1/24` | `default` ネットワークがホスト上に作られている (`--network host`) |
@@ -1180,3 +1181,4 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | 26 | `down` で VM を先にシャットダウンする (`libvirt-guests`、`KVM_STOP_TIMEOUT`)。VM のライフサイクルの確認手順 | 3.5、5.2、9.5 |
 | 27 | ドキュメントを手順書 4 本に再編し、README を一覧にする | |
 | 28 | WSL2/WSLg 対応と `host_*` フックを削除し、`KVM_HOST` を `auto\|headless` に縮小。ディスプレイ無しのホストで通し確認 | 1.1、2.1、2.2、4.2、5.6、9.3 |
+| 31 | 手順書を実地検証して確認コマンドを修正し、ホストの `sudo` をパスワード無し前提に統一 | 2.3、7 |
