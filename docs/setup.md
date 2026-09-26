@@ -18,8 +18,7 @@
 
    ```bash
    REPO=~/kvm-container                                        # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
-   REPO_URL=https://github.com/ryo-aoki-pc/kvm-container.git   # このリポジトリ。固定。<REPO_URL>
-   printf '%-8s = %s\n' REPO "${REPO}" REPO_URL "${REPO_URL}"
+   printf 'REPO = %s\n' "${REPO}"
    [ ! -d "${REPO}" ] || cd "${REPO}"
    ```
 
@@ -33,7 +32,6 @@
 
    - ホームディレクトリ配下 (`user_home_t`) に置く前提で、seed コンテナと両コンテナはラベル分離なし (`--security-opt label=disable` / `--privileged`) で動かし、`data/` を relabel しない。他の場所に置いた場合は検証していない
    - `install-desktop` はランチャーに `kvm.sh` の絶対パスを書くので、リポジトリを移動したら再実行する ([desktop.md](desktop.md))
-   - `REPO_URL` は公開リポジトリの HTTPS の URL で、clone に認証は要らない。手順 4 で使う
    - 最後の行は、clone 前 (ディレクトリが無い) には何もしない。新しいシェルで貼り直したときに、以降の `./kvm.sh` が相対パスで動くようにするため
 
    </details>
@@ -69,7 +67,7 @@
 1. リポジトリを clone する。
 
    ```bash
-   [ -e "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}/kvm.sh" ] || git clone "${REPO_URL:?手順 1 の REPO_URL が空のまま。手順 1 を貼り直す}" "${REPO}"
+   [ -e "${REPO:?手順 1 の REPO が空のまま。手順 1 を貼り直す}/kvm.sh" ] || git clone https://github.com/ryo-aoki-pc/kvm-container.git "${REPO}"
    cd "${REPO}" && ls -l kvm.sh
    ```
 
@@ -80,6 +78,7 @@
    <details>
    <summary>補足: clone</summary>
 
+   - clone 元は公開リポジトリの HTTPS の URL で、認証は要らない
    - `data/` は git 管理外 (`.gitignore`) で、手順 8 の `up` が初めて作る。clone した直後には無い
    - `REPO` にファイルの入った別のディレクトリがあると、`git clone` は `already exists and is not an empty directory` で止まる。`REPO` を変えて手順 1 から貼り直す
 
@@ -377,7 +376,7 @@
   - README の例を変数形に書き換えたもので、その形では再実行していない行:
     - 手順 6 の `cd "${REPO:?…}" && ./kvm.sh build kvm`、「表示先が変わったとき」の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"`
   - 新しく足した行で、本実行していないもの:
-    - 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install` (手順 3 の `rpm -q podman git` は実行した)、手順 4 の `git clone` (既に clone 済みのホストなので判定で飛ばした)
+    - 手順 2 の `sudo dnf install` (手順 3 の `rpm -q podman git` は実行した)、手順 4 の `git clone` (既に clone 済みのホストなので判定で飛ばした)
     - 「更新」の各手順、ロールバックの `rmi --ignore` とリポジトリの削除
 
 | 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
@@ -401,7 +400,6 @@
 > | 変数 | 意味 | 例 |
 > |---|---|---|
 > | `${REPO}` | このリポジトリを clone する場所。`data/` はこの中にできる。ユーザーのホームディレクトリ配下にする | `~/kvm-container` |
-> | `${REPO_URL}` | このリポジトリの clone 元。公開リポジトリなので認証は要らない。固定 | `https://github.com/ryo-aoki-pc/kvm-container.git` |
 >
 > - `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` / `KVM_SOFTWARE_GL` / `TZ` / `KVM_CLEAN_YES`) は手順 1 の変数ではなく、`KVM_BRIDGE=br0 ./kvm.sh up` のようにコマンドの前に付ける ([環境変数](#環境変数))
 > - 出力例・表の中の値は `<VM名>` / `<uid>` / `<ホストユーザー名>` のプレースホルダで書いてある。`<...>` を含むコマンドは bash のコードブロックに置いていない
@@ -594,5 +592,5 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの `sudo podman rmi --ignore …` とリポジトリの削除、更新の 3 項目と `git pull --ff-only` からの通常更新
-- 手順 1 の `REPO_URL`、手順 2 の `sudo dnf install`、手順 4 の `git clone` (他の新規の行と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
+- 手順 2 の `sudo dnf install`、手順 4 の `git clone` (他の新規の行と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
 - `~/kvm-container` に clone したホストでの通し (`0cab212` の実行は git の worktree を clone 先にしたもの)
