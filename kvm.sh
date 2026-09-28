@@ -14,16 +14,11 @@
 #   ./kvm.sh shell [kvm|gui]  root shell inside a container (default: kvm)
 #   ./kvm.sh logs [kvm|gui]   libvirt journal (kvm) and GUI application logs (gui); both by default
 #   ./kvm.sh clean            remove the containers and everything under data/ (asks for confirmation)
-#   ./kvm.sh install-desktop  install a .desktop entry and icons to launch virt-viewer from the Activities overview
-#   ./kvm.sh uninstall-desktop  remove the above
-#   ./kvm.sh launch <app>     used by the .desktop entry (virt-viewer): runs via sudo -n, reports failures as desktop notifications
 # Environment variables:
 #   KVM_HOST=auto|headless  headless skips the GUI container even when a display is detected
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
 #                           (the bridge must already exist on the host; see docs/setup.md)
-#   KVM_SOFTWARE_GL=1       force software rendering
 #   TZ=Asia/Tokyo           time zone of both containers (default: Asia/Tokyo)
-#   KVM_CLEAN_YES=1         skip the confirmation clean asks before removing data/
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -43,8 +38,6 @@ KVM_RUN_DIR=/run/kvm-container         # host directory shared by the containers
 KVM_STOP_TIMEOUT=180                   # seconds down gives the kvm container before podman kills it: running VMs are shut down
                                        # by libvirt-guests.service, which gives up after SHUTDOWN_TIMEOUT=120 (container/kvm/libvirt-guests)
 HOST_RUNTIME_DIR=/run/host-xdg-runtime # where the host's XDG_RUNTIME_DIR is mounted (read-only) inside the GUI container
-DESKTOP_TEMPLATE_DIR=$PWD/desktop      # templates for kvm-*.desktop
-DESKTOP_APPS="virt-viewer"             # apps that get a .desktop entry (subcommand names of container/gui/gui)
 
 # print the role given as the first argument of a subcommand (kvm|gui), nothing when it is not one
 role_arg() { case "${1:-}" in kvm|gui) echo "$1" ;; esac; }
@@ -77,27 +70,16 @@ host_user_args() {
   HOST_ARGS=(-e "HOST_USER=$HOST_USER" -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID")
 }
 
-# build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11/PulseAudio, GPU) into the GUI container.
+# build the podman arguments (GUI_ARGS) that bring the host session (Wayland/X11, GPU) into the GUI container.
 # The host's XDG_RUNTIME_DIR is mounted READ-ONLY at HOST_RUNTIME_DIR and never at /run/user/<uid>: that path belongs to
 # the container's own logind, which would otherwise take over the host's sockets (systemd --user, dbus-broker) and
 # delete the whole directory when a session ends (user-runtime-dir@.service). The sockets are therefore passed as
-# absolute paths; connecting to a unix socket works on a read-only mount.
+# absolute paths; connecting to a unix socket works on a read-only mount. A socket or file outside the runtime dir is
+# bind-mounted read-only at the same path by itself (a bind mount of a socket file works for connect()), never its
+# parent directory, which could be /tmp or $HOME and would shadow the container's own directories.
 # GUI_ARGS also identifies the host session: up recreates the GUI container when it changes (see start_gui)
 GUI_ARGS=()
-RO_MOUNTS=()
 HOST_RT=                      # the host's XDG_RUNTIME_DIR (set by gui_args)
-
-# bind-mount a host path read-only at the same path in the container, once (skipped if it or a parent is already mounted).
-# Used for the socket files themselves (a bind mount of a socket file works for connect()), never for their parent
-# directories, which could be /tmp or $HOME and would shadow the container's own directories
-add_ro_mount() {
-  local path=$1 m
-  for m in ${RO_MOUNTS[@]+"${RO_MOUNTS[@]}"}; do
-    case "$path" in "$m"|"$m"/*) return 0 ;; esac
-  done
-  RO_MOUNTS+=("$path")
-  GUI_ARGS+=(-v "$path:$path:ro")
-}
 
 # print the path under which a file/socket of the host session is reachable inside the container.
 # A relative path is taken relative to the host runtime dir and symlinks are resolved first. Targets inside the host
@@ -113,7 +95,7 @@ map_rt_path() {
 }
 
 gui_args() {   # the caller has checked have_display
-  local wl x11 xauth pulse ppath
+  local wl x11 xauth
   HOST_RT=${XDG_RUNTIME_DIR:-}
   if [ ! -d "$HOST_RT" ]; then
     echo "!! XDG_RUNTIME_DIR ($HOST_RT) does not exist. Run this from a terminal inside a desktop session" >&2
@@ -124,7 +106,7 @@ gui_args() {   # the caller has checked have_display
     case "$WAYLAND_DISPLAY" in /*) wl=$WAYLAND_DISPLAY ;; *) wl=$HOST_RT/$WAYLAND_DISPLAY ;; esac
     if [ -S "$wl" ]; then
       # pass the socket as an absolute path (accepted by libwayland >= 1.15); mount the socket itself if it is outside the runtime dir
-      wl=$(map_rt_path "$wl") || add_ro_mount "$wl"
+      wl=$(map_rt_path "$wl") || GUI_ARGS+=(-v "$wl:$wl:ro")
       GUI_ARGS+=(-e "WAYLAND_DISPLAY=$wl")
     else
       echo "!! WAYLAND_DISPLAY=$WAYLAND_DISPLAY is not a socket ($wl); Wayland disabled, X11 is used if DISPLAY is set" >&2
@@ -142,25 +124,8 @@ gui_args() {   # the caller has checked have_display
       fi
     fi
   fi
-  pulse=${PULSE_SERVER:-}
-  if [ -z "$pulse" ] && [ -S "$HOST_RT/pulse/native" ]; then pulse="unix:$HOST_RT/pulse/native"; fi
-  case "$pulse" in
-    unix:*) ppath=${pulse#unix:}
-            if [ -S "$ppath" ]; then
-              ppath=$(map_rt_path "$ppath") || add_ro_mount "$ppath"
-              pulse=unix:$ppath
-            else
-              echo "!! PULSE_SERVER=$pulse is not a socket; audio disabled" >&2
-              pulse=
-            fi ;;
-  esac
-  if [ -n "$pulse" ]; then GUI_ARGS+=(-e "PULSE_SERVER=$pulse"); fi
-  # the GPU's render nodes; the container is not privileged, so pass them explicitly
-  [ ! -d /dev/dri ] || GUI_ARGS+=(--device /dev/dri)
-  # no GPU on the host, or forced by the user
-  if [ ! -d /dev/dri ] || [ "${KVM_SOFTWARE_GL:-0}" = 1 ]; then
-    GUI_ARGS+=(-e LIBGL_ALWAYS_SOFTWARE=1)
-  fi
+  # the GPU's render nodes; the container is not privileged, so pass them explicitly. Without a GPU, render in software
+  if [ -d /dev/dri ]; then GUI_ARGS+=(--device /dev/dri); else GUI_ARGS+=(-e LIBGL_ALWAYS_SOFTWARE=1); fi
 }
 
 running() { $PODMAN container exists "$1" 2>/dev/null && [ "$($PODMAN inspect -f '{{.State.Running}}' "$1")" = true ]; }
@@ -199,27 +164,6 @@ sync_bridged_network() {
   virsh_in net-autostart bridged >/dev/null
   virsh_in net-start bridged >/dev/null
   echo ">> libvirt network \"bridged\" -> host bridge $KVM_BRIDGE (use it with ./kvm.sh virt-install ... --network network=bridged)"
-}
-
-# where .desktop files / icons go (the login user's area)
-desktop_dirs() {
-  DESKTOP_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/applications
-  ICON_DIR=${XDG_DATA_HOME:-${HOME:?}/.local/share}/icons
-}
-
-# drop the launchers older revisions of this repository installed (virt-manager, then firefox for cockpit): they are
-# no longer shipped, and their Exec (kvm.sh launch <app>) would only fail. Call after desktop_dirs
-remove_legacy_desktop() {
-  rm -f "$DESKTOP_DIR/kvm-virt-manager.desktop" "$DESKTOP_DIR/kvm-firefox.desktop" \
-        "$ICON_DIR"/hicolor/*/apps/virt-manager.* "$ICON_DIR"/hicolor/*/apps/firefox.* 2>/dev/null || true
-}
-
-# report a launch (.desktop) failure as a desktop notification; stderr only if no notification tool is available
-launch_error() {
-  echo "!! $*" >&2
-  if command -v notify-send >/dev/null 2>&1; then notify-send -a kvm.sh -i dialog-error "kvm-container" "$*" 2>/dev/null || true
-  elif command -v zenity >/dev/null 2>&1; then zenity --error --title=kvm-container --text="$*" 2>/dev/null || true
-  fi
 }
 
 # prepare a host directory for persistent data; if empty, copy the initial content from the kvm image (config files,
@@ -355,10 +299,8 @@ case "$cmd" in
   clean)  "$0" down
           [ -d "$KVM_DATA_DIR" ] || { echo ">> $KVM_DATA_DIR does not exist"; exit 0; }
           echo ">> to be removed: $KVM_DATA_DIR"; sudo du -sh "$KVM_DATA_DIR"/* 2>/dev/null || true
-          if [ "${KVM_CLEAN_YES:-0}" != 1 ]; then
-            read -r -p "This deletes the VM disks and definitions as well. Continue? [y/N] " ans
-            [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> aborted"; exit 1; }
-          fi
+          read -r -p "This deletes the VM disks and definitions as well. Continue? [y/N] " ans
+          [ "$ans" = y ] || [ "$ans" = Y ] || { echo ">> aborted"; exit 1; }
           sudo rm -rf "$KVM_DATA_DIR" ;;
   viewer)
     have_display || { echo "!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): virt-viewer needs a desktop session; manage the VMs with ./kvm.sh virsh" >&2; exit 2; }
@@ -378,49 +320,6 @@ case "$cmd" in
         $PODMAN exec "$GUI_CONTAINER" sh -c 'tail -n 50 /var/log/gui.log 2>/dev/null; journalctl --no-pager -n 30 -u gui-user'
       else echo ">> $GUI_CONTAINER is not running"; fi
     fi
-    ;;
-  launch)
-    # for .desktop entries (Activities). There is no terminal to ask for the sudo password, so podman is run with sudo -n;
-    # passwordless sudo for podman must be configured beforehand
-    app=${1:-}
-    case "$app" in virt-viewer) ;; *) echo "usage: $0 launch virt-viewer" >&2; exit 1 ;; esac
-    if ! err=$(sudo -n podman exec "$GUI_CONTAINER" gui "$app" 2>&1); then
-      case "$err" in
-        *password*) hint="configure passwordless sudo for podman (launch runs sudo -n without a terminal)" ;;
-        *)          hint="check that the GUI container is running (./kvm.sh up)" ;;
-      esac
-      launch_error "could not start $app: $err"$'\n'"$hint"
-      exit 1
-    fi
-    ;;
-  install-desktop)
-    # make the apps launchable from the Activities overview: install .desktop entries and icons
-    [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user logged in to the desktop" >&2; exit 1; }
-    desktop_dirs
-    $PODMAN image exists "$GUI_IMAGE" || build_image gui
-    # 1) icons: extract only the virt-viewer icons from hicolor in the GUI image (a generic icon is shown if this fails)
-    mkdir -p "$ICON_DIR" "$DESKTOP_DIR"
-    (set +o pipefail
-     $PODMAN run --rm --network none "$GUI_IMAGE" sh -c \
-       'cd /usr/share/icons && find hicolor -type f -path "*/apps/virt-viewer.*" | tar -cf - -T -' \
-       | tar -xf - -C "$ICON_DIR") 2>/dev/null || true
-    # 2) .desktop entries
-    remove_legacy_desktop
-    for app in $DESKTOP_APPS; do
-      sed "s|@KVM_SH@|$PWD/kvm.sh|g" "$DESKTOP_TEMPLATE_DIR/kvm-$app.desktop" >"$DESKTOP_DIR/kvm-$app.desktop"
-      ls "$ICON_DIR"/hicolor/*/apps/"$app".* >/dev/null 2>&1 || echo ">> (could not extract the $app icon; a generic icon will be shown)"
-    done
-    if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database -q "$DESKTOP_DIR" || true; fi
-    echo ">> installed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/"
-    echo ">> search for \"Virt Viewer\" in the Activities overview to launch it (start the containers with ./kvm.sh up first;"
-    echo ">>  launch runs sudo -n podman, so passwordless sudo for podman must be configured)"
-    ;;
-  uninstall-desktop)
-    [ "$(id -u)" != 0 ] || { echo "!! run this without sudo, as the user who ran install-desktop" >&2; exit 1; }
-    desktop_dirs
-    for app in $DESKTOP_APPS; do rm -f "$DESKTOP_DIR/kvm-$app.desktop" "$ICON_DIR"/hicolor/*/apps/"$app".*; done
-    remove_legacy_desktop
-    echo ">> removed: $DESKTOP_DIR/kvm-*.desktop, $ICON_DIR/hicolor/*/apps/virt-viewer.*"
     ;;
   *)      usage ;;
 esac
