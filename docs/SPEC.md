@@ -7,8 +7,8 @@
 | --- | --- |
 | 対象コミット | main (PR 28「WSL2 対応とホスト種別フックを削除する」まで。付録 B) |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md と docs/*.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | README.md = 手順書の一覧と記法、docs/setup.md / vm.md / desktop.md / bridge.md = 導入手順と使い方 (変更後の確認手順は各手順書の付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は各手順書を参照し、本書では繰り返さない |
+| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md と docs/setup.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (任意の節にブリッジとアクティビティからの起動、変更後の確認手順は付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
@@ -70,10 +70,10 @@ flowchart LR
 
 | 項目 | 理由 (出典) |
 | --- | --- |
-| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/vm.md「選択した方針」) |
+| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/setup.md「選択した方針」) |
 | Web コンソール (cockpit) とブラウザ (firefox) | 廃止した。VM の操作は CLI、画面は virt-viewer (PR 25) |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
-| 自動テスト | テストスイートは無い。検証は docs/setup.md と docs/vm.md の付録の確認手順を手で流す (9 章) |
+| 自動テスト | テストスイートは無い。検証は docs/setup.md の付録の確認手順を手で流す (9 章) |
 
 ### 1.3 用語
 
@@ -137,7 +137,7 @@ flowchart TD
 
 | 確認 | 条件 | 結果 |
 | --- | --- | --- |
-| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see docs/bridge.md)` で exit 1 |
+| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see docs/setup.md)` で exit 1 |
 | `virbr0` の残存 | `/sys/class/net/virbr0` がある | 警告のみ (`!! virbr0 already exists on the host ...` と `sudo ip link del virbr0` の案内)。起動は続くが `default` ネットワークの起動は失敗する |
 
 ## 3. システム構成
@@ -1047,7 +1047,7 @@ stateDiagram-v2
 
 ## 9. 検証手順
 
-自動テストは無い。変更後は静的検査と、docs/setup.md の付録 (物理 AlmaLinux 10 + GNOME / ディスプレイ無し) と docs/vm.md の付録 (VM のライフサイクル) の確認手順を手で流す。本章はその期待結果と検証している項目の表。
+自動テストは無い。変更後は静的検査と、docs/setup.md の付録 (物理 AlmaLinux 10 + GNOME / ディスプレイ無し / VM のライフサイクル) の確認手順を手で流す。本章はその期待結果と検証している項目の表。
 
 ### 9.1 静的検査
 
@@ -1112,7 +1112,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 
 ### 9.5 VM のライフサイクル
 
-OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは docs/vm.md「付録: VM のライフサイクルの確認手順」)。
+OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは docs/setup.md「付録: VM のライフサイクルの確認手順」)。
 キックスタート (`poweroff`、`%packages` に `qemu-guest-agent`) を `OEMDRV` ラベルの ISO にして `--location <boot ISO>` でインストールすると、
 インストール後に `shut off` になり、永続定義はディスク起動に切り替わる (kernel/initrd の直接起動と boot ISO は外れる)。
 起動の確認は `virsh qemu-agent-command lctest '{"execute":"guest-ping"}'`、再起動の確認はシリアルログ
@@ -1134,7 +1134,7 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | `virsh autostart` → `down kvm` → `up kvm` | `running (booted)`。`data/etc-libvirt/qemu/autostart/` に symlink | 自動起動 |
 | autostart 無しの VM を動かしたまま `down kvm` → `up kvm` | 定義が残り `shut off` のまま | `ON_BOOT=ignore` |
 | UEFI の VM に `virsh undefine` (`--nvram` 無し) | `Cannot undefine domain with NVRAM/varstore` で失敗し、定義も残る | 8 章 |
-| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (docs/vm.md「VM を削除する」) |
+| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (docs/setup.md「VM を削除する」) |
 | CD-ROM に ISO を入れたまま `virsh undefine --remove-all-storage` | ISO も消える (使い捨ての ISO で確認する) | 8 章の注意が今も正しいか |
 
 ## 付録 A. ファイル一覧とコンテナ内配置
@@ -1182,3 +1182,4 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | 27 | ドキュメントを手順書 4 本に再編し、README を一覧にする | |
 | 28 | WSL2/WSLg 対応と `host_*` フックを削除し、`KVM_HOST` を `auto\|headless` に縮小。ディスプレイ無しのホストで通し確認 | 1.1、2.1、2.2、4.2、5.6、9.3 |
 | 31 | 手順書を実地検証して確認コマンドを修正し、ホストの `sudo` をパスワード無し前提に統一 | 2.3、7 |
+| 34 | 手順書 4 本を docs/setup.md の 1 本にまとめ、`KVM_BRIDGE` のエラーの参照先を docs/setup.md にする | 2.4 |
