@@ -20,7 +20,7 @@
 # Environment variables:
 #   KVM_HOST=auto|headless  headless skips the GUI container even when a display is detected
 #   KVM_BRIDGE=br0          attach VMs to this host bridge: it is registered as the libvirt network "bridged"
-#                           (the bridge must already exist on the host; see docs/bridge.md)
+#                           (the bridge must already exist on the host; see docs/setup.md)
 #   KVM_SOFTWARE_GL=1       force software rendering
 #   TZ=Asia/Tokyo           time zone of both containers (default: Asia/Tokyo)
 #   KVM_CLEAN_YES=1         skip the confirmation clean asks before removing data/
@@ -171,7 +171,7 @@ virsh_in() { $PODMAN exec "$KVM_CONTAINER" virsh -c qemu:///system "$@"; }
 # rules are created on the host, and VMs can be attached to a host bridge. Checks before starting
 check_host_network() {
   if [ -n "$KVM_BRIDGE" ] && [ ! -d "/sys/class/net/$KVM_BRIDGE/bridge" ]; then
-    echo "!! KVM_BRIDGE=$KVM_BRIDGE is not a bridge on this host. Create it first (see docs/bridge.md)" >&2
+    echo "!! KVM_BRIDGE=$KVM_BRIDGE is not a bridge on this host. Create it first (see docs/setup.md)" >&2
     exit 1
   fi
   if [ -e /sys/class/net/virbr0 ]; then
