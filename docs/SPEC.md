@@ -5,10 +5,10 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 対象コミット | main (PR 28「WSL2 対応とホスト種別フックを削除する」まで。付録 B) |
+| 対象コミット | main (PR 36「実施手順をシナリオに分け、アクティビティからの起動などを削除する」まで。付録 B) |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `desktop/*` `.gitignore`、README.md と docs/setup.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (任意の節にブリッジとアクティビティからの起動、変更後の確認手順は付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
+| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と docs/setup.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (実施手順は 1 度だけ行うものと繰り返すものをシナリオに分け、任意の節にブリッジ、変更後の確認手順は付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
@@ -73,6 +73,8 @@ flowchart LR
 | SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/setup.md「選択した方針」) |
 | Web コンソール (cockpit) とブラウザ (firefox) | 廃止した。VM の操作は CLI、画面は virt-viewer (PR 25) |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
+| アプリ一覧 (Activities) からの起動 | 廃止した。VM の画面は端末から `kvm.sh viewer` で開く (PR 36) |
+| 音声 | ホストの PulseAudio / PipeWire のソケットは `kvm-gui` に渡さない。VNC の画面を出す virt-viewer では使わない (PR 36) |
 | 自動テスト | テストスイートは無い。検証は docs/setup.md の付録の確認手順を手で流す (9 章) |
 
 ### 1.3 用語
@@ -129,9 +131,8 @@ flowchart TD
 
 | 要件 | 振る舞い |
 | --- | --- |
-| root で実行しない | `host_user_args` が uid 0 を検出すると `!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)` で exit 1。`install-desktop` / `uninstall-desktop` も root を拒否する |
+| root で実行しない | `host_user_args` が uid 0 を検出すると `!! run kvm.sh as a regular user, not root (the container user mirrors the invoking user)` で exit 1 |
 | `sudo` がパスワード無しで使える | `podman`、`modprobe`、`chmod /dev/kvm`、`data/` と `/run/kvm-container` の操作に使う。手順書はどのブロックでも `sudo` が止まらない前提で書いてある (sudoers の設定は利用者の責任で、本書はその書き方を定義しない) |
-| `launch` (Activities から起動) | 端末が無くパスワードを入力できないので `sudo -n podman` を使う。上の前提が満たされていなければ起動せず、失敗はデスクトップ通知になる (4.7 節) |
 
 ### 2.4 起動前に確認されるホスト資源 (`check_host_network`、`kvm` の起動時)
 
@@ -149,8 +150,7 @@ flowchart LR
   subgraph host ["ホスト"]
     direction TB
     kvmsh["kvm.sh"]
-    desktop["kvm-*.desktop (Activities)"]
-    session["デスクトップセッション<br/>XDG_RUNTIME_DIR / Wayland / X11 / Pulse のソケット、/dev/dri"]
+    session["デスクトップセッション<br/>XDG_RUNTIME_DIR / Wayland / X11 のソケット、/dev/dri"]
     data["data/<br/>var-libvirt / etc-libvirt / home"]
     rundir["/run/kvm-container/libvirt (tmpfs)<br/>libvirt のソケット共有"]
     hostnet["ホストのネットワーク名前空間<br/>NIC / br0 / virbr0 / VNC"]
@@ -179,7 +179,6 @@ flowchart LR
     gpid1 --> glogind
     gpid1 --> gapp
   end
-  desktop -->|"launch (sudo -n podman exec kvm-gui)"| kvmsh
   kvmsh -->|"podman run -e"| kpid1
   kvmsh -->|"virsh / virt-install (podman exec)"| virt
   kvmsh -->|"podman run -e / --label"| gpid1
@@ -204,7 +203,7 @@ flowchart LR
 ```mermaid
 flowchart TB
   subgraph L1 ["層 1: ホスト側 (sudo podman を呼ぶだけ)"]
-    kvmsh["kvm.sh"] --- tmpl["desktop/kvm-virt-viewer.desktop (テンプレート)"]
+    kvmsh["kvm.sh"]
   end
   subgraph L2 ["層 2: イメージ (Containerfile、1 ファイルのマルチステージ)"]
     base["base: 10-minimal + shadow-utils / systemd / dbus-daemon / locale<br/>libvirt グループを gid 985 で固定、両イメージ共通の unit マスク"]
@@ -225,7 +224,6 @@ flowchart TB
   kvmimg -->|"COPY + chmod +x"| k1
   guiimg -->|"COPY + chmod +x"| g1
   kvmsh -->|"up: podman run / exec"| L3
-  kvmsh -->|"install-desktop: @KVM_SH@ を絶対パスに置換"| tmpl
 ```
 
 図 4: 3 層構造とマルチステージビルド。`base` と `common` は両イメージに入り、`kvm` / `gui` がそれぞれのターゲットになる。
@@ -234,7 +232,6 @@ flowchart TB
 | ファイル | 層 | 入るイメージ | 役割 | 実行タイミング |
 | --- | --- | --- | --- | --- |
 | `kvm.sh` | ホスト | | 操作スクリプト。ホストのセッション環境とユーザー情報を `podman run` の引数に変換する | 利用者が実行 |
-| `desktop/kvm-*.desktop` | ホスト | | Activities 用ランチャーのテンプレート | `install-desktop` が `~/.local/share/applications/` に配置 |
 | `Containerfile` | イメージ | | AlmaLinux 10 minimal + `microdnf`。`base` → `common` → `kvm` / `gui` | `build` |
 | `container/common/gui-user-setup` + `gui-user.service` | コンテナ | 両方 | GUI ユーザーをホストユーザーとして作り、linger を有効化 | 起動時 (sysinit、logind より前) |
 | `container/kvm/kvm-perms.service` | コンテナ | kvm | `/dev/kvm` `/dev/net/tun` の権限と `ip_forward` | 起動時 (sysinit、virtqemud より前) |
@@ -242,7 +239,7 @@ flowchart TB
 | `container/kvm/virtd-socket.conf` | コンテナ | kvm | `virt{qemu,network,storage,nodedev,secret}d.socket` の drop-in (`SocketMode=0660` `SocketGroup=libvirt`) | ビルド時に配置、socket 起動時に効く |
 | `container/kvm/kvm-net-teardown.service` | コンテナ | kvm | 停止時に libvirt ネットワークを `net-destroy` | 停止時 (`ExecStop`、`libvirt-guests` より後) |
 | `container/kvm/libvirt-guests` | コンテナ | kvm | `libvirt-guests.service` の設定。停止時に動いている VM を ACPI シャットダウン (最大 120 秒) | 停止時 (`ExecStop`、VM の machine scope より前) |
-| `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh viewer` / `launch` から `podman exec` |
+| `container/gui/gui` | コンテナ | gui | GUI ユーザーとしてアプリをホストの画面に起動 | `kvm.sh viewer` から `podman exec` |
 
 ### 3.3 コンテナ実行仕様 (`podman run`)
 
@@ -274,7 +271,7 @@ flowchart TB
 | `-v data/home:/home/<HOST_USER>` | rw | virt-viewer の設定等 (`kvm` と同じホーム) |
 | `-v /run/kvm-container/libvirt:/run/libvirt` | rw | libvirt ソケットの共有 |
 | `HOST_ARGS` | `-e HOST_USER= -e HOST_UID= -e HOST_GID=` | ホストユーザーの写し |
-| `GUI_ARGS` | ro マウント、`-e WAYLAND_DISPLAY/DISPLAY/XAUTHORITY/PULSE_SERVER/HOST_RUNTIME_DIR/LIBGL_ALWAYS_SOFTWARE`、`--device /dev/dri` | ホストのセッション (4.4 節) |
+| `GUI_ARGS` | ro マウント、`-e WAYLAND_DISPLAY/DISPLAY/XAUTHORITY/HOST_RUNTIME_DIR/LIBGL_ALWAYS_SOFTWARE`、`--device /dev/dri` | ホストのセッション (4.4 節) |
 | `-e TZ=${TZ:-Asia/Tokyo}` `--shm-size 2g` | 同上 | |
 | イメージ | `localhost/kvm-container/gui:latest` | |
 
@@ -285,7 +282,7 @@ flowchart TB
 | `base` | `quay.io/almalinuxorg/10-minimal:10` | `LANG=ja_JP.UTF-8` `LC_ALL=ja_JP.UTF-8` `container=podman`。`shadow-utils` (minimal には無い) を先に入れ、`ARG LIBVIRT_GID=985` で `groupadd -r -g 985 libvirt` (パッケージが gid を割り当てる前に固定。985 はシステム範囲で、ホストユーザーの gid とは衝突しない)。続けて `systemd` (minimal には無い) `dbus-daemon` (dbus-broker の代わり) `glibc-langpack-ja` `glibc-langpack-en`。両イメージ共通の unit マスク (図 6)。`STOPSIGNAL SIGRTMIN+3`、`CMD ["/sbin/init"]` |
 | `common` | `base` | `gui-user.service` / `gui-user-setup` を配置して enable (一般ユーザーはイメージに焼き込まず、起動時に作る)。`systemd-logind.service` を unmask |
 | `kvm` | `common` | `iputils` `procps-ng` `libvirt` `libvirt-daemon-kvm` `virt-install`。`container/kvm/*` を配置し (`libvirt-guests` は `/etc/sysconfig/libvirt-guests` へ)、`virtd-socket.conf` を 5 つの `.socket.d/kvm-container.conf` に `install`。unit を enable (図 6) |
-| `gui` | `common` | `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts` `tar`。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
+| `gui` | `common` | `virt-viewer` `libvirt-client` `util-linux-core` (runuser / setsid) `dejavu-sans-fonts` `google-noto-sans-cjk-vf-fonts`。`video` / `render` グループが無ければ作る (GUI ユーザーの追加は起動時に `gui-user-setup` が行う)。`gui` を配置。`/etc/tmpfiles.d/x11.conf` → `/dev/null` |
 
 パッケージ方針は「依存で入らないものだけを、それが来るステージに列挙する」。`microdnf --setopt=install_weak_deps=0` (`False/True` は不可)。
 
@@ -304,7 +301,7 @@ flowchart LR
   end
   subgraph gui ["gui"]
     g2["virt-viewer / libvirt-client (virsh)"]
-    g3["util-linux-core (runuser / setsid) / dejavu-sans-fonts / google-noto-sans-cjk-vf-fonts / tar"]
+    g3["util-linux-core (runuser / setsid) / dejavu-sans-fonts / google-noto-sans-cjk-vf-fonts"]
   end
   subgraph deps ["依存で入る主なもの (明示しない)"]
     qemu["qemu-kvm / qemu-img / edk2-ovmf / swtpm / util-linux"]
@@ -394,15 +391,12 @@ flowchart LR
 | `build [kvm\|gui] [podman build 引数]` | ロール省略で両方 | | ロールごとに `podman build --target <role> -t localhost/kvm-container/<role>:latest -f Containerfile "$@" .` (`>> building ... (Containerfile target <role>)`) | podman の終了コード |
 | `up [kvm\|gui]` | 追加引数があれば usage で 1 | 2 章の要件 | 省略: `start_kvm` → `have_display` なら `start_gui`、無ければ `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)`。`kvm`: `start_kvm` のみ。`gui`: `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): the GUI container is not needed` で 1、あれば `start_gui` のみ (5.1 節) | `kvm` の readiness が 30 秒で確認できなければ `!! could not confirm startup. Check systemctl --failed via ./kvm.sh shell` で 1 |
 | `down [kvm\|gui]` | 追加引数があれば usage で 1 | | 省略: `kvm-gui` を `podman rm -f -i -t 10`、`kvm` を `podman rm -f -i -t 180` (`KVM_STOP_TIMEOUT`。動いている VM があれば先に `>> shutting down the running VMs (up to 120 s)...`)、さらに `sudo rm -rf /run/kvm-container`。`kvm` / `gui`: そのコンテナだけ (共有 run dir は残す)。`data/` は残る (5.2 節) | podman の終了コード |
-| `clean` | 無し | | `kvm.sh down` (両方) → `data/` が無ければ `>> ... does not exist` で 0 → 削除対象と `du -sh` を表示 → `KVM_CLEAN_YES=1` でなければ `This deletes the VM disks and definitions as well. Continue? [y/N]` を尋ね、`y`/`Y` 以外は `>> aborted` で 1 → `sudo rm -rf data/` | 上記 |
+| `clean` | 無し | | `kvm.sh down` (両方) → `data/` が無ければ `>> ... does not exist` で 0 → 削除対象と `du -sh` を表示 → `This deletes the VM disks and definitions as well. Continue? [y/N]` を尋ね、`y`/`Y` 以外は `>> aborted` で 1 → `sudo rm -rf data/` | 上記 |
 | `viewer [VM名]` | VM 名 (省略可)、以降は virt-viewer の引数 | ディスプレイ | `have_display` でなければ `!! no display found (DISPLAY / WAYLAND_DISPLAY unset, or KVM_HOST=headless): virt-viewer needs a desktop session; manage the VMs with ./kvm.sh virsh` で 2。`kvm.sh up` (足りないものを起動し、再ログイン後は `kvm-gui` を作り直す) → `podman exec kvm-gui gui virt-viewer "$@"` (VM 名なしなら選択ダイアログ、5.3 節) | `gui` の終了コード |
 | `virt-install ...` | virt-install の引数 | `kvm` 起動中 | `podman exec -it kvm virt-install --connect qemu:///system "$@"` | virt-install の終了コード |
 | `virsh ...` | virsh の引数 | `kvm` 起動中 | `podman exec -it kvm virsh -c qemu:///system "$@"` | virsh の終了コード |
 | `shell [kvm\|gui]` | ロール省略で `kvm` | 起動中 | `podman exec -it <container> bash` | bash の終了コード |
 | `logs [kvm\|gui]` | ロール省略で両方 | | `kvm`: 起動中なら `journalctl --no-pager -n 30 -u kvm-libvirt-conf -u virtqemud -u gui-user`、でなければ `>> kvm is not running`。`gui`: 起動中なら `/var/log/gui.log` 末尾 50 行 + `journalctl -n 30 -u gui-user`、でなければ `>> kvm-gui is not running` | |
-| `launch <app>` | `virt-viewer` | `.desktop` から呼ばれる。パスワード無しの `sudo podman` (2.3 節) | `sudo -n podman exec kvm-gui gui <app>` を実行し、失敗をデスクトップ通知にする (4.7 節)。他の引数は usage を出して 1 | 成功 0 / 失敗 1 |
-| `install-desktop` | 無し | root 以外、デスクトップにログインしたユーザー | `gui` イメージが無ければ `build gui`。アイコン抽出と `.desktop` 配置 (4.7 節) | 0 |
-| `uninstall-desktop` | 無し | root 以外 | `.desktop` とアイコンを削除 | 0 |
 
 ### 4.2 環境変数 (ホスト側の入力)
 
@@ -412,9 +406,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `KVM_HOST` | `auto` | `headless` にすると `have_display` が偽になり、表示用環境変数があっても `kvm-gui` を起動しない。`headless` 以外の値はすべて `auto` と同じ扱い (値の検証はしない) | `have_display` |
 | `KVM_BRIDGE` | 未設定 | ホストの既存ブリッジ名。libvirt ネットワーク `bridged` として登録する。未設定なら `bridged` を削除 | `check_host_network`、`sync_bridged_network` |
-| `KVM_SOFTWARE_GL` | 未設定 | `1` でソフトウェア描画を強制 (`LIBGL_ALWAYS_SOFTWARE=1`)。`/dev/dri` が無いホストでは設定しなくても強制される | `gui_args` |
 | `TZ` | `Asia/Tokyo` | 両コンテナのタイムゾーン | `podman run -e TZ` |
-| `KVM_CLEAN_YES` | 未設定 | `1` で `clean` の確認を省略 | `clean` |
 
 セッションから読む変数 (`have_display` が真のとき、`gui_args`):
 
@@ -424,8 +416,6 @@ flowchart LR
 | `WAYLAND_DISPLAY` | Wayland ソケット。相対名は runtime dir 基準。ソケットでなければ警告して Wayland を無効化 |
 | `DISPLAY` | X11。設定されていれば `/tmp/.X11-unix` (realpath) を ro マウントする |
 | `XAUTHORITY` | 設定されていて読めれば、コンテナ内パスに変換して渡す |
-| `PULSE_SERVER` | 未設定なら `$XDG_RUNTIME_DIR/pulse/native` がソケットのときに `unix:` 形式で補う。`unix:` 以外はそのまま渡す。ソケットでなければ `audio disabled` |
-| `XDG_DATA_HOME` / `HOME` | `install-desktop` の配置先 (`${XDG_DATA_HOME:-$HOME/.local/share}`) |
 
 ### 4.3 ホスト → コンテナの値の受け渡し
 
@@ -436,7 +426,7 @@ flowchart LR
 flowchart LR
   subgraph src ["kvm.sh (ホスト)"]
     id["id -un / -u / -g"] --> ha["HOST_ARGS: -e HOST_USER, HOST_UID, HOST_GID"]
-    sess["WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / PULSE_SERVER、/dev/dri"] --> map["map_rt_path / add_ro_mount"] --> ga["GUI_ARGS: -e (コンテナ内の絶対パス)、-v ...:ro、--device /dev/dri<br/>-e HOST_RUNTIME_DIR、LIBGL_ALWAYS_SOFTWARE"]
+    sess["WAYLAND_DISPLAY / DISPLAY / XAUTHORITY、/dev/dri"] --> map["map_rt_path"] --> ga["GUI_ARGS: -e (コンテナ内の絶対パス)、-v ...:ro、--device /dev/dri<br/>-e HOST_RUNTIME_DIR、LIBGL_ALWAYS_SOFTWARE"]
     ga --> label["sha256 の先頭 16 桁 → --label kvm.gui-session"]
     tz["TZ"] --> tzarg["-e TZ"]
   end
@@ -450,7 +440,7 @@ flowchart LR
   kenv -->|"HOST_USER / HOST_UID / HOST_GID"| kgus["gui-user-setup (kvm): ユーザー作成"]
   genv -->|"HOST_USER / HOST_UID / HOST_GID"| ggus["gui-user-setup (kvm-gui): ユーザー作成"]
   genv -->|"HOST_USER"| gui["gui"]
-  genv -->|"WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / PULSE_SERVER / LIBGL_ALWAYS_SOFTWARE<br/>(podman exec が環境変数として継承)"| gui
+  genv -->|"WAYLAND_DISPLAY / DISPLAY / XAUTHORITY / LIBGL_ALWAYS_SOFTWARE<br/>(podman exec が環境変数として継承)"| gui
   gui -->|"unset HOST_USER HOST_UID HOST_GID"| app["runuser → GUI アプリ"]
 ```
 
@@ -461,8 +451,8 @@ flowchart LR
 | --- | --- | --- | --- | --- |
 | `HOST_USER` `HOST_UID` `HOST_GID` | `-e` | 両方 | `id -un` / `id -u` / `id -g` | `gui-user-setup` (全部)、`gui` (`HOST_USER`) |
 | `HOST_RUNTIME_DIR` | `-e` | `kvm-gui` | `/run/host-xdg-runtime` | `gui` (Xauthority の探索) |
-| `WAYLAND_DISPLAY` `DISPLAY` `XAUTHORITY` `PULSE_SERVER` | `-e` (存在するものだけ) | `kvm-gui` | コンテナ内から見た絶対パス (`PULSE_SERVER` は `unix:` 付き、`DISPLAY` はホストの値そのまま) | `gui` → GUI アプリ。`gui_session_matches` も参照する |
-| `LIBGL_ALWAYS_SOFTWARE` | `-e` (条件付き) | `kvm-gui` | `1` (`/dev/dri` が無いか `KVM_SOFTWARE_GL=1` のとき) | `gui` → GUI アプリ |
+| `WAYLAND_DISPLAY` `DISPLAY` `XAUTHORITY` | `-e` (存在するものだけ) | `kvm-gui` | コンテナ内から見た絶対パス (`DISPLAY` はホストの値そのまま) | `gui` → GUI アプリ。`gui_session_matches` も参照する |
+| `LIBGL_ALWAYS_SOFTWARE` | `-e` (条件付き) | `kvm-gui` | `1` (`/dev/dri` が無いとき) | `gui` → GUI アプリ |
 | `kvm.gui-session` | `--label` | `kvm-gui` | `GUI_ARGS` の各要素を改行区切りで `sha256sum` した先頭 16 桁 | `gui_session_matches` (`podman inspect`) |
 | `TZ` | `-e` | 両方 | `${TZ:-Asia/Tokyo}` | コンテナ全体 |
 
@@ -507,7 +497,7 @@ flowchart LR
   rl -->|"-v rw"| k4
   rl -->|"-v rw"| g4
   rt -->|"-v ro"| crt
-  wlout -->|"add_ro_mount"| cwl
+  wlout -->|"-v ro"| cwl
   x11 -->|"-v ro"| cx11
   xauth -->|"-v ro"| cxa
   dri -->|"--device"| cdri
@@ -523,26 +513,21 @@ flowchart LR
 | `data/etc-libvirt` | `kvm` `/etc/libvirt` | rw | 常に | VM 定義、ネットワーク定義、libvirt の設定 (`kvm-gui` には無い) |
 | `data/home` | 両方 `/home/<HOST_USER>` | rw | 常に | virt-viewer の設定等。1 つのホームを両方で使う |
 | `/run/kvm-container/libvirt` | 両方 `/run/libvirt` | rw | 常に | libvirt のソケット共有 (3.5 節) |
-| `$XDG_RUNTIME_DIR` | `kvm-gui` `/run/host-xdg-runtime` | ro | GUI 有効 | Wayland / Xwayland 認証 / Pulse のソケットに届くため。unix ソケットは ro でも connect できる |
+| `$XDG_RUNTIME_DIR` | `kvm-gui` `/run/host-xdg-runtime` | ro | GUI 有効 | Wayland のソケットと Xwayland の認証ファイルに届くため。unix ソケットは ro でも connect できる |
 | `readlink -f /tmp/.X11-unix` | `kvm-gui` `/tmp/.X11-unix` | ro | `DISPLAY` 設定時 | X11 フォールバック。ro にするのは systemd-tmpfiles にホストの X ソケットを消させないため |
-| runtime dir 外のソケット (Wayland / Pulse) | `kvm-gui` 同じパス | ro | `map_rt_path` が失敗したとき | ソケットファイルだけをマウントする。親ディレクトリ (`/tmp` や `$HOME`) はマウントしない (コンテナ側のディレクトリを隠すため) |
-| runtime dir 外の `XAUTHORITY` | `kvm-gui` 同じパス | ro | 同上 | `add_ro_mount` を通さず直接 `-v` (重複チェック無し) |
+| runtime dir 外の Wayland ソケット | `kvm-gui` 同じパス | ro | `map_rt_path` が失敗したとき | ソケットファイルだけをマウントする。親ディレクトリ (`/tmp` や `$HOME`) はマウントしない (コンテナ側のディレクトリを隠すため) |
+| runtime dir 外の `XAUTHORITY` | `kvm-gui` 同じパス | ro | 同上 | ファイルだけをマウントする |
 | `/dev/dri` | `kvm-gui` `/dev/dri` | `--device` | ホストに `/dev/dri` がある | GPU の render node。非特権なので明示的に渡す。`gui` が `renderD*` を 0666 にする |
 
 ```mermaid
 flowchart TD
-  in["入力 p (例: wayland-0、/run/user/1000/pulse/native、XAUTHORITY)"] --> rel{"絶対パスか"}
+  in["入力 p (例: wayland-0、XAUTHORITY)"] --> rel{"絶対パスか"}
   rel -->|"いいえ"| pre["HOST_RT/p を前置する"] --> rl
   rel -->|"はい"| rl["readlink -f で実体パスに解決 (失敗時は p のまま)"]
   rl --> under{"実体が HOST_RT の配下か"}
   under -->|"はい"| ok["/run/host-xdg-runtime/相対部分 を出力して return 0"]
   under -->|"いいえ"| ng["実体パスをそのまま出力して return 1"]
-  ng --> which{"呼び出し元"}
-  which -->|"WAYLAND_DISPLAY / PULSE_SERVER"| aro["add_ro_mount path"]
-  which -->|"XAUTHORITY"| direct["-v path:path:ro を直接追加"]
-  aro --> dup{"RO_MOUNTS に同じパス、または親がある"}
-  dup -->|"はい"| skip["追加しない"]
-  dup -->|"いいえ"| add["RO_MOUNTS に記録し -v path:path:ro を追加"]
+  ng --> add["呼び出し元 (WAYLAND_DISPLAY / XAUTHORITY) が -v path:path:ro を追加<br/>(そのファイルだけ。親ディレクトリはマウントしない)"]
 ```
 
 図 10: `map_rt_path` の変換規則と、runtime dir 外だったときの処理。GNOME の Wayland ソケットは runtime dir の中にあるので
@@ -556,9 +541,8 @@ flowchart TD
 | `WAYLAND_DISPLAY` がソケット | `WAYLAND_DISPLAY` | 絶対パス (libwayland 1.15 以降が受け付ける)。ソケットでなければ `!! WAYLAND_DISPLAY=... is not a socket (...); Wayland disabled, X11 is used if DISPLAY is set` |
 | `DISPLAY` 設定、`/tmp/.X11-unix` がディレクトリ | `DISPLAY` | ホストの値そのまま |
 | 上に加えて `XAUTHORITY` が読める | `XAUTHORITY` | 変換後のパス |
-| Pulse ソケットあり | `PULSE_SERVER` | `unix:<変換後のパス>`。`unix:` 以外の値は無変換 |
 | `/dev/dri` がある | `--device /dev/dri` | |
-| `/dev/dri` が無い、または `KVM_SOFTWARE_GL=1` | `LIBGL_ALWAYS_SOFTWARE` | `1` |
+| `/dev/dri` が無い | `LIBGL_ALWAYS_SOFTWARE` | `1` |
 
 ### 4.5 ネットワークとポート
 
@@ -624,49 +608,7 @@ flowchart TD
 | `/run/kvm-container` | 永続化しない。`start_kvm` が `libvirt/` の中身を空にし、`start_gui` も `mkdir -p` する。`down` (引数なし) で削除 |
 | 削除 | `data/` は `clean` のみ (`down` では残る) |
 
-### 4.7 デスクトップ統合 (Activities からの起動)
-
-```mermaid
-sequenceDiagram
-  participant S as GNOME Shell (Activities)
-  participant D as kvm-virt-viewer.desktop
-  participant K as kvm.sh launch app
-  participant P as sudo -n podman exec kvm-gui
-  participant G as gui (kvm-gui 内)
-  participant N as 通知 (notify-send、無ければ zenity、無ければ stderr のみ)
-  S->>D: 起動 (TryExec で kvm.sh の存在を確認、無ければ非表示)
-  D->>K: Exec = kvm.sh (絶対パス) launch virt-viewer
-  K->>P: gui app (stderr を err に取り込む)
-  alt sudo がパスワードを要求 (err に password を含む)
-    P-->>K: 失敗
-    K->>N: could not start app ... configure passwordless sudo for podman (launch runs sudo -n without a terminal)
-  else それ以外の失敗 (kvm-gui 未起動など)
-    P-->>K: 失敗
-    K->>N: could not start app ... check that the GUI container is running (./kvm.sh up)
-  else 成功
-    P->>G: podman exec kvm-gui gui app
-    G->>G: systemd の起動完了と user@UID.service を待つ (5.3 節)
-    G-->>S: VM 選択ダイアログ → virt-viewer のウィンドウ (setsid で切り離し、出力は /var/log/gui.log)
-  end
-```
-
-図 13: `.desktop` からの起動経路。端末が無く sudo のパスワードを入力できないため `sudo -n` を使い、失敗理由はデスクトップ通知で伝える。
-`launch` は `kvm.sh viewer` と違って `up` を経由しないので、コンテナが止まっていれば通知で `./kvm.sh up` を案内する。
-2.3 節の前提 (パスワード無しの `sudo`) が満たされていれば、sudo がパスワードを要求する分岐には入らない。
-
-| 項目 | 仕様 |
-| --- | --- |
-| 配置先 | `${XDG_DATA_HOME:-$HOME/.local/share}/applications/kvm-virt-viewer.desktop`。アイコンは同 `icons/hicolor/<size>/apps/virt-viewer.*` |
-| テンプレート置換 | `desktop/kvm-<app>.desktop` の `@KVM_SH@` を `<リポジトリ>/kvm.sh` (絶対パス) に置換 (`sed`)。リポジトリを移動したら再実行が必要 |
-| `.desktop` の主要キー | `TryExec=@KVM_SH@` (無ければエントリ非表示)、`Exec="@KVM_SH@" launch virt-viewer`、`Icon=virt-viewer`、`StartupWMClass=virt-viewer`、`Terminal=false`、`Name[ja]` / `Comment[ja]` / `Keywords` の日本語 |
-| アイコン抽出 | `gui` イメージの一時コンテナ (`--rm --network none`) で `/usr/share/icons/hicolor` から `apps/virt-viewer.*` だけを `tar` で取り出す。失敗しても続行 (汎用アイコンになる旨を表示) |
-| 旧エントリの掃除 | `install-desktop` / `uninstall-desktop` は、以前のリビジョンが入れた `kvm-virt-manager.desktop` / `kvm-firefox.desktop` と `icons/hicolor/*/apps/{virt-manager,firefox}.*` を削除する (`remove_legacy_desktop`) |
-| 後処理 | `update-desktop-database -q` (あれば)。配置先と Activities での検索語を表示 |
-| `launch` の前提 | 実行ユーザーが `sudo -n podman` を実行できること (2.3 節の前提)。`launch` は `virt-viewer` 以外を拒否する |
-| 通知 | `notify-send -a kvm.sh -i dialog-error "kvm-container" "<本文>"` → 無ければ `zenity --error --title=kvm-container --text=<本文>` → どちらも無ければ stderr のみ |
-| 解除 | `uninstall-desktop` が `.desktop` と `icons/hicolor/*/apps/virt-viewer.*` を削除 |
-
-### 4.8 ログとメッセージの規約
+### 4.7 ログとメッセージの規約
 
 | 出力元 | 形式 | 出力先 |
 | --- | --- | --- |
@@ -674,7 +616,7 @@ sequenceDiagram
 | `kvm.sh` の警告・エラー | `!! ...` (続きの行は 3 スペースのインデント) | stderr |
 | `gui-user-setup` (両コンテナ) | `gui-user: ...` (エラーは `gui-user: ERROR ...`) | journal (`gui-user.service`) |
 | `libvirt-conf` (kvm) | 出力無し (失敗は unit の失敗として journal に残る) | journal (`kvm-libvirt-conf.service`) |
-| `gui` 自身の警告 (kvm-gui) | `gui: ...`、headless は `!! GUI unavailable ...` | `podman exec` の stderr (`launch` 経由ではデスクトップ通知に含まれる) |
+| `gui` 自身の警告 (kvm-gui) | `gui: ...`、headless は `!! GUI unavailable ...` | `podman exec` の stderr (`kvm.sh viewer` を実行した端末) |
 | GUI アプリの stdout/stderr | アプリの出力そのまま | `kvm-gui` 内 `/var/log/gui.log` (追記) |
 | `kvm.sh logs` | `kvm`: `journalctl -n 30 -u kvm-libvirt-conf -u virtqemud -u gui-user`。`gui`: `gui.log` 末尾 50 行 + `journalctl -n 30 -u gui-user` | stdout |
 
@@ -706,7 +648,7 @@ sequenceDiagram
   end
   K->>P: sync_bridged_network (KVM_BRIDGE に応じて bridged を define / undefine)
   K-->>U: ready. VMs: ./kvm.sh virt-install ... | ./kvm.sh virsh list | ./kvm.sh viewer <VM>
-  Note over K: have_display なら start_gui (図 15)、無ければ no display found で終了
+  Note over K: have_display なら start_gui (図 14)、無ければ no display found で終了
   K->>K: gui_args → session = sha256(GUI_ARGS) の先頭 16 桁
   K->>P: kvm-gui が起動中で gui_session_matches なら already running でスキップ
   K->>P: gui イメージが無ければ build --target gui、podman rm -f -i kvm-gui
@@ -716,7 +658,7 @@ sequenceDiagram
   K-->>U: kvm-gui started. VM screen: ./kvm.sh viewer [VM]
 ```
 
-図 14: 起動シーケンス。`kvm` の起動と readiness 確認が終わってから `kvm-gui` を起動する。`kvm-gui` 側には readiness 待ちが無く、
+図 13: 起動シーケンス。`kvm` の起動と readiness 確認が終わってから `kvm-gui` を起動する。`kvm-gui` 側には readiness 待ちが無く、
 代わりに `gui` がアプリ起動前に systemd の起動完了を待つ (5.3 節)。`up kvm` / `up gui` はそれぞれ片方だけを行う。
 
 ```mermaid
@@ -734,7 +676,7 @@ flowchart TD
   run --> msg[">> kvm-gui started. VM screen: ./kvm.sh viewer [VM]"]
 ```
 
-図 15: `start_gui` とセッション一致判定 (`gui_session_matches`)。ラベルの一致だけでは足りない (再ログイン後もソケットのパスが
+図 14: `start_gui` とセッション一致判定 (`gui_session_matches`)。ラベルの一致だけでは足りない (再ログイン後もソケットのパスが
 同じことが多い) ので、コンテナ内からソケットの実在も確かめる。`kvm` と VM には手を触れない。
 
 ```mermaid
@@ -766,7 +708,7 @@ flowchart LR
   end
 ```
 
-図 16: コンテナ内 unit の順序関係 (`Before=` / `After=` / `WantedBy=` から)。`gui-user.service` が logind より前なのは、
+図 15: コンテナ内 unit の順序関係 (`Before=` / `After=` / `WantedBy=` から)。`gui-user.service` が logind より前なのは、
 logind が `/var/lib/systemd/linger` を起動時にしか読まないため。`kvm-libvirt-conf` が全 `.socket` より前なのは、デーモンが設定を読む前に
 `/etc/libvirt` を整えるため。`kvm-net-teardown` が virt*d の後なのは停止時に先に止まるため。`libvirt-guests` が teardown と VM の scope の後なのも同じで、
 停止時は VM のシャットダウン → ネットワークの削除 → デーモンの停止の順になる。`gui-user.service` の `Before=virtqemud.socket`
@@ -816,7 +758,7 @@ sequenceDiagram
   Note over H: data/ (VM 定義・ディスク・home) は残る。down kvm / down gui は片方だけ止め、/run/kvm-container は残す
 ```
 
-図 17: 停止シーケンス。`virbr0` はホストの名前空間にあるため、コンテナが消えても自動では消えない。libvirt のデーモンが
+図 16: 停止シーケンス。`virbr0` はホストの名前空間にあるため、コンテナが消えても自動では消えない。libvirt のデーモンが
 生きているうちに `net-destroy` し、idle-exit していて socket activation が拒否される場合に備えて `ip link del` も行う。
 `kvm-gui` を先に止めるのは、`kvm` の libvirt に接続しているクライアントを先に閉じるため。
 `libvirt-guests.service` が無いと、コンテナの systemd は qemu の machine scope をすぐに止めるので、VM はゲスト OS のシャットダウンを経ずに
@@ -853,7 +795,7 @@ flowchart TD
   u --> l["exec setsid -f runuser -u USER -- cmd<br/>stdout / stderr は /var/log/gui.log に追記"]
 ```
 
-図 18: `gui` の処理。GUI アプリは **コンテナの** `/run/user/UID` と session bus を使い (GTK アプリがこの 2 つを前提にする)、
+図 17: `gui` の処理。GUI アプリは **コンテナの** `/run/user/UID` と session bus を使い (GTK アプリがこの 2 つを前提にする)、
 ホストの runtime dir はソケットへの connect にだけ使う。libvirt へは `/run/libvirt` の共有ソケットで届く (`qemu:///system`)。
 `runuser` は `--login` 無しなので環境がそのまま渡り、そのためにホストユーザーの情報を先に `unset` する。
 
@@ -878,7 +820,7 @@ flowchart TD
   k["linger: /var/lib/systemd/linger/USER を作成"] --> l["/home/USER があれば chown -R HOST_UID:HOST_GID"]
 ```
 
-図 19: GUI ユーザーの作成。両コンテナで同じスクリプトが動く (パスワードは設定しない)。イメージには一般ユーザーが
+図 18: GUI ユーザーの作成。両コンテナで同じスクリプトが動く (パスワードは設定しない)。イメージには一般ユーザーが
 入っていないので、通常の起動では毎回ここで新規作成する (`kvm.sh up` は毎回 `podman rm` してイメージから作る)。
 uid/gid の再調整は `podman restart` のようにコンテナを作り直さずに再起動した場合の経路。
 主グループの gid を変えても `libvirt` グループ (gid 985) への所属は変わらない。
@@ -912,7 +854,7 @@ flowchart TD
   e --> f[">> libvirt network bridged -> host bridge KVM_BRIDGE ...<br/>定義は data/etc-libvirt に永続化"]
 ```
 
-図 20: `bridged` ネットワークの同期 (`kvm` コンテナ内の virsh で実行)。ブリッジ自体の存在は起動前に `check_host_network` が確認済み。
+図 19: `bridged` ネットワークの同期 (`kvm` コンテナ内の virsh で実行)。ブリッジ自体の存在は起動前に `check_host_network` が確認済み。
 毎回 define し直すので、`KVM_BRIDGE` の値を変えるとその値に追従する。`up gui` では実行されない。
 
 ## 6. 設計上の不変条件
@@ -969,7 +911,7 @@ flowchart LR
   b15 --> r15
 ```
 
-図 21: 禁止構成とその帰結。左の構成にすると右の不具合が再発する。
+図 20: 禁止構成とその帰結。左の構成にすると右の不具合が再発する。
 
 | 規則 | 実装箇所 | 補足 |
 | --- | --- | --- |
@@ -996,10 +938,10 @@ flowchart LR
 | `kvm-gui` の権限 | 非特権 (`--privileged` 無し、capability の追加無し)、`--security-opt label=disable`、`--network host`、`--device /dev/dri` | ホストのデスクトップに接続する GUI アプリを特権コンテナから切り離す。SELinux のラベル分離は無いので、ホスト側からは通常の非特権コンテナ相当 |
 | libvirt へのアクセス制御 | polkit ではなくソケットの所有グループ (`root:libvirt 0660`) と `auth_unix_rw = "none"`。両コンテナの GUI ユーザーが `libvirt` グループ | `libvirt` グループ (gid 985) に入れるプロセスは誰でも `qemu:///system` を完全に操作できる。gid 985 を持つホスト側のプロセスも `/run/kvm-container/libvirt` 経由で届く |
 | GUI ユーザーのパスワード | 設定しない (`useradd` のままロック)。ホストのパスワードやハッシュはコンテナに渡さない。sudoers も無い | コンテナにログインする経路は無い (操作は `sudo podman exec` = ホスト root 相当) |
-| ホスト側の sudo | `kvm.sh` は `sudo podman` を使い、`launch` (Activities 起動) は端末が無いので `sudo -n`。手順書はホストの `sudo` がパスワード無しである前提 (2.3 節) で、sudoers の書き方は文書化しない | podman の NOPASSWD sudo はホスト root 相当の権限付与になる。設定は利用者の判断 |
+| ホスト側の sudo | `kvm.sh` は `sudo podman` を使う。手順書はホストの `sudo` がパスワード無しである前提 (2.3 節) で、sudoers の書き方は文書化しない | podman の NOPASSWD sudo はホスト root 相当の権限付与になる。設定は利用者の判断 |
 | libvirt / qemu | `security_driver = "none"`、`namespaces = []`。`/dev/kvm` `/dev/net/tun` は 0666、`kvm-gui` の `/dev/dri/renderD*` も 0666 | VM 間の SELinux / namespace 隔離は無い |
 | ホストのセッション資源 | `kvm-gui` にのみ、runtime dir と `/tmp/.X11-unix` と Xauthority を読み取り専用で渡す | GUI アプリはホストのコンポジタに接続できる (画面・入力にアクセス可能) が、ホストのソケットを消したり作り直したりはできない |
-| `data/` | root / qemu 所有。`clean` で削除 (確認あり、`KVM_CLEAN_YES=1` で省略)。`kvm-gui` からは `home` だけが見える (rw) | VM ディスクと定義はホストのファイルシステムに平文で置かれる |
+| `data/` | root / qemu 所有。`clean` で削除 (確認あり)。`kvm-gui` からは `home` だけが見える (rw) | VM ディスクと定義はホストのファイルシステムに平文で置かれる |
 
 ## 8. 既知の制限事項
 
@@ -1009,7 +951,6 @@ flowchart LR
 | ホストの再ログイン | GNOME からログアウト/再ログインすると `/run/user/UID` が作り直され、`kvm-gui` に渡した Wayland ソケットのパスが無効になる。`./kvm.sh up` (または `viewer`) が `kvm-gui` だけを作り直す。`kvm` と VM は動いたまま |
 | headless での GUI | `kvm.sh viewer` は `have_display` の判定で exit 2、`up gui` は exit 1。画面を表示する手段は無く、VM は `virsh` / `virt-install` で操作する |
 | `kvm-gui` の `/run/user/UID` | 非特権なので tmpfs にならず `/run` 直下の通常のディレクトリ (systemd のフォールバック、想定内) |
-| 1 コンテナ構成からの移行 | 旧構成の `kvm` コンテナは `/run/libvirt` を共有していないので、`./kvm.sh down` で消してから `./kvm.sh build && ./kvm.sh up` する。旧イメージ `localhost/qemu-kvm-cockpit` は `sudo podman rmi` で消せる。`data/` はそのまま使える (`kvm-libvirt-conf.service` が設定を更新する) |
 | ホストの停止 | VM はコンテナ内の qemu。ホストの再起動・シャットダウンではコンテナごと止められ、`libvirt-guests` の 120 秒が確保される保証は無いので、先に `./kvm.sh down` する |
 | ACPI に応じない VM | OS の無い VM や ACPI の電源ボタンを無視する OS は、`down` で 120 秒待ったあと電源断と同じ状態で止まる |
 | VM の削除 | UEFI の VM は `virsh undefine` に `--nvram` が要る (無いと `Cannot undefine domain with NVRAM/varstore`)。`--remove-all-storage` は CD-ROM に入ったままの ISO も削除するので、`--storage <target>` で消すディスクを指定するか、先に `change-media --eject --config` する |
@@ -1042,7 +983,7 @@ stateDiagram-v2
   Down --> NoData : kvm.sh clean (確認あり)
 ```
 
-図 22: コンテナと `data/` のライフサイクル。`down` は `data/` を残し、`clean` だけが消す。イメージは `clean` でも残る。
+図 21: コンテナと `data/` のライフサイクル。`down` は `data/` を残し、`clean` だけが消す。イメージは `clean` でも残る。
 `down kvm` だけを行うと `kvm-gui` は libvirt に届かない状態で残る (次の `up` で `kvm` が再起動し、共有 run dir が空にされるので復帰する)。
 
 ## 9. 検証手順
@@ -1076,8 +1017,8 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | `sudo podman exec kvm-gui ls -la /dev/dri` | `renderD*` が 0666 | `--device /dev/dri` と `gui` の chmod |
 | `sudo ausearch -m avc -ts recent` | 拒否が無い | SELinux 上の問題が無い |
 | `./kvm.sh virt-install ...` → `./kvm.sh viewer <VM名>` | VM が作られ、GNOME にウィンドウが出て VM のコンソールが見える | `virt-install` パススルー、session bus、Wayland 接続、共有ソケット経由の VNC |
-| `./kvm.sh viewer` (VM 名なし) | VM 選択ダイアログが出る | `gui` の `--wait` 無しの経路 (5.3 節)。`install-desktop` 後は Activities の「Virt Viewer」も同じ |
-| GNOME 再ログイン後に `./kvm.sh up` | `kvm-gui` だけが作り直され、`./kvm.sh virsh list` の VM が動いたまま | `gui_session_matches` (図 15) |
+| `./kvm.sh viewer` (VM 名なし) | VM 選択ダイアログが出る | `gui` の `--wait` 無しの経路 (5.3 節) |
+| GNOME 再ログイン後に `./kvm.sh up` | `kvm-gui` だけが作り直され、`./kvm.sh virsh list` の VM が動いたまま | `gui_session_matches` (図 14) |
 | `./kvm.sh down; ip link show virbr0; ls /run/kvm-container` | どちらも残っていない | `kvm-net-teardown` と共有 run dir の削除 |
 
 ### 9.3 ディスプレイ無し (headless)
@@ -1106,7 +1047,6 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 | --- | --- |
 | `KVM_BRIDGE` 周り | `./kvm.sh virsh net-list` で `bridged` が active。`KVM_BRIDGE` 無しで `up` すると消える |
 | `down` | ホストに `virbr0` と dnsmasq と `/run/kvm-container` が残らない。`down` → `up` で VM 定義とディスクが復元される。動いている VM はシャットダウンされる (9.5 節) |
-| `install-desktop` / `launch` | Activities の「Virt Viewer」から VM 選択ダイアログが開く。`kvm-gui` 未起動時と sudo 失敗時に通知が出る |
 | GUI ユーザー | 両コンテナの `/etc/shadow` でユーザーがロックされている。コンテナには他に一般ユーザーが居ない |
 | ロール引数 | `up kvm` は `kvm-gui` を起動しない。ディスプレイ無しで `up gui` は exit 1。`build gui` は `gui` イメージだけを作る |
 
@@ -1142,7 +1082,6 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | リポジトリ内 | イメージ | コンテナ内 (Containerfile の COPY) | モード | 備考 |
 | --- | --- | --- | --- | --- |
 | `kvm.sh` | | (ホスト側) | 実行可能 | |
-| `desktop/kvm-virt-viewer.desktop` | | (ホスト側、`install-desktop` が `~/.local/share/applications/` へ) | | `@KVM_SH@` を置換 |
 | `Containerfile` | | | | マルチステージ: `base` → `common` → `kvm` / `gui` |
 | `container/common/gui-user-setup` | 両方 | `/usr/local/bin/gui-user-setup` | `chmod +x` | |
 | `container/common/gui-user.service` | 両方 | `/etc/systemd/system/gui-user.service` | | `systemctl enable` |
@@ -1165,7 +1104,7 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | --- | --- | --- |
 | 2 | `systemd-logind` のマスク解除。cockpit ログイン直後の自動ログアウトを修正 | 3.4、6 |
 | 3 | 永続化を named volume からホストディレクトリのバインドマウントに変更 (seed 処理) | 4.6 |
-| 5 | `install-desktop` / `launch` の追加 | 4.7 |
+| 5 | `install-desktop` / `launch` の追加 (PR 36 で削除) | |
 | 8 | Quadlet / sudoers 配置の廃止、コンテナ名・イメージ名・データディレクトリを固定値に | 1.3、3.3 |
 | 9 | cockpit にホストのユーザー名・パスワードでログインできるように (ホストユーザーの写しを作る、ハッシュの env-file 渡し) | 4.3、5.4、7 |
 | 10 | ホストの runtime dir を読み取り専用の別パスにマウント。cockpit ログアウトでホストの `/run/user/UID` が消える問題を修正。GUI ユーザーの linger | 4.4、5.3、6 |
@@ -1176,10 +1115,11 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | 16 | CLAUDE.md の追加 | |
 | 18 | コンテナをサーバ `kvm` とデスクトップクライアント `kvm-gui` に分割。マルチステージ Containerfile、`container/{common,kvm,gui}/`、共有 `/run/libvirt` とソケット権限による認証 (`auth_unix_rw = "none"`、`libvirt` の gid 固定)、`kvm-libvirt-conf.service`、`kvm.sh` のロール引数、セッション判定による `kvm-gui` だけの作り直し、ハッシュは `kvm` にだけ渡す | 1.1、3.2〜3.5、4.1、4.3、4.4、5.1、5.2、6 |
 | 20 | イメージのテンプレートユーザー `admin` を廃止し、`gui-user-setup` が起動時に GUI ユーザーを作成する。`data/home` の seed 元は `/etc/skel` | 3.4、4.6、5.3、5.4 |
-| 24 | virt-manager を削除。`kvm-gui` の `data/var-libvirt` (ro) マウントも削除 | 3.3、4.4、4.7 |
-| 25 | cockpit と firefox を廃止。VM の操作は `kvm.sh virsh` / `virt-install` (新設)、画面は virt-viewer (`viewer` は VM 名省略で選択ダイアログ)。パスワードハッシュ・sudoers・`libvirtdbus`・`COCKPIT_*`・generator・`cockpit.conf`・`hostname` を削除し、ランチャーを `kvm-virt-viewer.desktop` に | 1.1、2.3、2.4、3.1〜3.5、4.1〜4.3、4.5、4.7、5.1、5.3〜5.5、6、7、8 |
+| 24 | virt-manager を削除。`kvm-gui` の `data/var-libvirt` (ro) マウントも削除 | 3.3、4.4 |
+| 25 | cockpit と firefox を廃止。VM の操作は `kvm.sh virsh` / `virt-install` (新設)、画面は virt-viewer (`viewer` は VM 名省略で選択ダイアログ)。パスワードハッシュ・sudoers・`libvirtdbus`・`COCKPIT_*`・generator・`cockpit.conf`・`hostname` を削除し、ランチャーを `kvm-virt-viewer.desktop` に | 1.1、2.3、2.4、3.1〜3.5、4.1〜4.3、4.5、5.1、5.3〜5.5、6、7、8 |
 | 26 | `down` で VM を先にシャットダウンする (`libvirt-guests`、`KVM_STOP_TIMEOUT`)。VM のライフサイクルの確認手順 | 3.5、5.2、9.5 |
 | 27 | ドキュメントを手順書 4 本に再編し、README を一覧にする | |
 | 28 | WSL2/WSLg 対応と `host_*` フックを削除し、`KVM_HOST` を `auto\|headless` に縮小。ディスプレイ無しのホストで通し確認 | 1.1、2.1、2.2、4.2、5.6、9.3 |
 | 31 | 手順書を実地検証して確認コマンドを修正し、ホストの `sudo` をパスワード無し前提に統一 | 2.3、7 |
 | 34 | 手順書 4 本を docs/setup.md の 1 本にまとめ、`KVM_BRIDGE` のエラーの参照先を docs/setup.md にする | 2.4 |
+| 36 | 手順書の実施手順を、1 度だけ行うもの (導入、VM の作成) と繰り返すもの (VM の利用、再ログイン後) のシナリオに分ける。アクティビティからの起動 (`install-desktop` / `uninstall-desktop` / `launch`、`desktop/`)・`KVM_SOFTWARE_GL`・`KVM_CLEAN_YES`・音声ソケットの受け渡し (`PULSE_SERVER`、`add_ro_mount`)・旧版からの移行の記述を削除 | 1.2、2.3、3.1〜3.4、4.1〜4.4、4.7、7、8、9.2、9.4、付録 A |

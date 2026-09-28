@@ -4,8 +4,8 @@
 # host directory shared by both containers (see kvm.sh), and the GUI user is in the libvirt group that owns the sockets
 #   gui virt-viewer [vm]   -> virt-viewer --connect qemu:///system --attach [--wait vm]
 #                             (without a VM name, virt-viewer opens a dialog to choose one from the list of VMs)
-# DISPLAY / WAYLAND_DISPLAY / XAUTHORITY / PULSE_SERVER are passed by kvm.sh when the container starts, as absolute paths
-# into the read-only mounts of the host session (the host's XDG_RUNTIME_DIR is mounted at HOST_RUNTIME_DIR).
+# DISPLAY / WAYLAND_DISPLAY / XAUTHORITY are passed by kvm.sh when the container starts, as absolute paths into the
+# read-only mounts of the host session (the host's XDG_RUNTIME_DIR is mounted at HOST_RUNTIME_DIR).
 # XDG_RUNTIME_DIR is NOT the host's: the apps use the container's own /run/user/<uid>, which logind creates for the
 # lingering GUI user (see gui-user-setup)
 set -e

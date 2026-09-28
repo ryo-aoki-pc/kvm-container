@@ -123,8 +123,6 @@ RUN microdnf -y install --setopt=install_weak_deps=0 \
         # fonts
         dejavu-sans-fonts \
         google-noto-sans-cjk-vf-fonts \
-        # tar for install-desktop icon extraction; not in the minimal base and not pulled by anything
-        tar \
     && microdnf clean all && rm -rf /var/cache/dnf \
     # GPU access for the GUI user (/dev/dri comes in with --device; the render nodes are also made 0666 by gui).
     # gui-user-setup puts the user it creates into these groups, so they only have to exist here
