@@ -7,6 +7,7 @@
 > - **画面を使うなら、GNOME にログインした端末から実行する**。SSH のシェルからでは `kvm-gui` が起動しない
 > - **ホストの `sudo` は、パスワードを聞かれずに実行できるようにしておく**。本書は、どのブロックでも `sudo` が止まらない前提で書いてある。sudoers の設定は読者が行う (書き方は扱わない。権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
 > - **VM を作るなら、インストールに使う ISO を先にホストにダウンロードしておく** (手順 1 でそのパスを入れる)
+> - **VM を作るのは x86_64 のホスト**。手順 12 で使う SATA と e1000e は、aarch64 の qemu-kvm には無い (手順 12 の補足)
 > - **手順 2 には `[y/N]` の確認がある**。答えて、インストールが終わってから手順 3 を貼る
 > - **手順 13 はホストのデスクトップにウィンドウが開く**。GNOME にログインした端末から行い、ウィンドウの中でインストールを進める。ディスプレイの無いホストでは画面は出ない (手順 13 の注意)
 > - **[ブリッジの節](#vm-をホストのブリッジにつなぐ-任意)の手順 4 と[ロールバック](#ロールバック)の手順 5 は、GNOME の端末 (コンソール) から単独で貼る**。NIC の接続を切り替えるので、その NIC 越しの ssh は切れる
@@ -57,6 +58,7 @@
    - `ISO` は絶対パス (`~` 始まりを含む) で入れる。相対パスで入れると、手順 1 の最後の行や手順 4 の `cd` の後で見つからなくなる
    - `VM_NAME` は libvirt のドメイン名で、ディスク `/var/lib/libvirt/images/<VM名>.qcow2`、定義 `data/etc-libvirt/qemu/<VM名>.xml`、UEFI 変数 `data/var-libvirt/qemu/nvram/<VM名>_VARS.fd` の名前になる。削除 (`undefine`) もこの名前で行う
    - `VM_MEMORY` は MiB、`VM_DISK` は GiB (`virt-install` の単位)。既定値は旧 README の例 (`alma10` / 4096 / 2 / 20)
+   - ディスクのバス (SATA の SSD) と NIC のモデル (e1000e) は変数にしていない。手順 12 のコマンドに直接書いてある
    - `VM_NETWORK` は手順 12 の `--network network=` に渡す libvirt ネットワークの名前。`default` は NAT (`virbr0`、192.168.122.0/24)、`bridged` は[ブリッジの節](#vm-をホストのブリッジにつなぐ-任意)で `KVM_BRIDGE` を付けて登録したホストのブリッジ
    - 変数はそのシェルの中だけで有効。以降の手順は、リポジトリ直下 (手順 4 か、貼り直した手順 1 の最後の行で移る) で貼る
 
@@ -279,27 +281,40 @@
 
    - ISO が root 所有で置かれていればよい
 
-1. VM を作る。
+1. ディスクを SATA の SSD、NIC を e1000e にして VM を作る。
 
    ```bash
-   ./kvm.sh virt-install --name "${VM_NAME:?手順 1 の VM_NAME が空のまま。値を入れて貼り直す}" --memory "${VM_MEMORY}" --vcpus "${VM_VCPUS}" --disk "size=${VM_DISK}" \
+   ./kvm.sh virt-install --name "${VM_NAME:?手順 1 の VM_NAME が空のまま。値を入れて貼り直す}" --memory "${VM_MEMORY}" --vcpus "${VM_VCPUS}" \
+     --machine q35 --disk "size=${VM_DISK},bus=sata,target.rotation_rate=1" \
      --cdrom "/var/lib/libvirt/images/$(basename "${ISO:?手順 1 の ISO が空のまま。値を入れて貼り直す}")" --osinfo detect=on,require=off \
-     --network "network=${VM_NETWORK:?手順 1 の VM_NETWORK が空のまま。手順 1 を貼り直す}" --graphics vnc --noautoconsole
+     --network "network=${VM_NETWORK:?手順 1 の VM_NETWORK が空のまま。手順 1 を貼り直す},model=e1000e" --graphics vnc --noautoconsole
    ```
 
    - `virt-install` はすぐ戻り、VM はインストーラが起動した状態 (`running`) になる
    - ディスクは `/var/lib/libvirt/images/${VM_NAME}.qcow2` (ホストの `data/var-libvirt/images/`) に作られる
+   - ディスクは SATA の SSD (`sda`)、NIC は `e1000e` になる (確かめるのは手順 14)
    - `VM_NETWORK=bridged` でネットワークが見つからないと言われたら、[ブリッジの節](#vm-をホストのブリッジにつなぐ-任意)の手順 6・7 (`KVM_BRIDGE` を付けた `up`) を先に行う
+   - **注意**: aarch64 のホストでは通らない想定。qemu-kvm に SATA と e1000e が無い (この手順の補足)
 
    <details>
    <summary>補足: virt-install のオプション</summary>
 
    - `--osinfo` に OS 名を渡す場合の候補は `./kvm.sh virt-install --osinfo list` で確認できる
-   - `--graphics vnc` と `--noautoconsole` は固定 (理由は後半の補足の[選択した方針](#選択した方針))
+   - `--graphics vnc`・`--noautoconsole`・`--machine q35` と、`bus=sata`・`target.rotation_rate=1`・`model=e1000e` は固定 (理由は後半の補足の[選択した方針](#選択した方針))
+   - `bus=sata` のディスクのターゲット名は `sda` になる。`--cdrom` の CD-ROM は virt-install が後ろに足すので `sdb` (どちらも SATA で、並び順に `sd*` が振られる)
+   - `--machine q35` は、ISO から OS を検出できなかったときのため
+   - 付けないと、検出できなかったときの virt-install は i440fx (`pc-i440fx-…`。RHEL 10 で非推奨) を選び、CD-ROM が IDE の `hda` になる (AlmaLinux 10 のコンテナの `--print-xml` で確認)
+   - `target.rotation_rate=1` は定義の `<target dev='sda' bus='sata' rotation_rate='1'/>` になり、ゲストからはディスクが SSD (非回転) に見える
+   - `rotation_rate` を付けられるのは SATA / SCSI / IDE のディスクだけ (libvirt 7.3 以降。virtio には無い)
+   - `model=e1000e` の NIC は Intel 82574L のエミュレーション
+   - `bus` と `model` を付けないと、virt-install は `--osinfo` で検出した OS から選ぶ。AlmaLinux のような virtio に対応した OS なら `vda` と `virtio` になる
+   - 新しいディスクはスパースに作られ、virt-install が `discard='unmap'` を付ける (既定)。ゲストの TRIM がホストの qcow2 に届く想定で、確かめていない
+   - SATA (AHCI) と e1000e は、x86_64 の qemu-kvm にはあるが、aarch64 の qemu-kvm には無い。CentOS Stream 10 の qemu-kvm のビルド設定で見たもので、AlmaLinux の aarch64 では確かめていない
    - `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。本書は手順 1 の `VM_NETWORK` で明示し、ホストによってつなぎ先が変わらないようにした。ネットワークの仕様は [SPEC.md 4.5 節](SPEC.md#45-ネットワークとポート)
    - `default` につないだ VM がネットワークに出られること (インストーラがリポジトリに届き、起動後に `domifaddr --source agent` で IP が取れること) は PR #26 のライフサイクル確認で見ている ([付録](#付録-vm-のライフサイクルの確認手順))。そのときは `--network` を省いた形で、そのホストでは `default` につながった
    - `virt-install --initrd-inject` は `kvm` イメージに `cpio` が無いので使えない。キックスタートは `OEMDRV` ラベルの ISO にして渡す ([付録](#付録-vm-のライフサイクルの確認手順)、[SPEC.md 8 章](SPEC.md#8-既知の制限事項))
-   - `--cdrom` の VM は、インストーラの再起動で一度 `shut off` になり、以後はディスクから起動する。インストール後の CD-ROM は空 (`domblklist` の `sda` が `-`) になる (旧 README の記述と virt-install の仕様による。実測は `--location` + キックスタート形で、`--cdrom` 形は再実行していない)
+   - `--cdrom` の VM は、インストーラの再起動で一度 `shut off` になり、以後はディスクから起動する。インストール後の CD-ROM は空 (`domblklist` の `sdb` が `-`) になる (旧 README の記述と virt-install の仕様による。実測は `--location` + キックスタート形で、`--cdrom` 形は再実行していない)
+   - Windows と検出した ISO だけは、virt-install が CD-ROM に入れたままにする (インストールが何段階かに分かれるため。`--osinfo win11` の `--print-xml` で確認)。`domblklist` の `sdb` に ISO が残る
 
    </details>
 
@@ -324,22 +339,29 @@
 
    </details>
 
-1. VM とディスクができたか確かめる。
+1. VM ができ、ディスクが SATA の SSD、NIC が e1000e か確かめる。
 
    ```bash
    ./kvm.sh virsh list --all                       # VM_NAME の行がある (インストール完了後は shut off)
-   ./kvm.sh virsh domblklist "${VM_NAME}"          # vda = /var/lib/libvirt/images/${VM_NAME}.qcow2。sda はインストール中は ISO、終了後は空 (-)
+   ./kvm.sh virsh domblklist "${VM_NAME}"          # sda = /var/lib/libvirt/images/${VM_NAME}.qcow2。sdb はインストール中は ISO、終了後は空 (-)
+   ./kvm.sh virsh dumpxml "${VM_NAME}" | grep "bus='sata'"   # sda の行に rotation_rate='1' (SATA の SSD)
+   ./kvm.sh virsh domiflist "${VM_NAME}"           # Model が e1000e
    sudo ls -l "${REPO}/data/var-libvirt/images/"   # ${VM_NAME}.qcow2 と ISO がある (root / qemu 所有)
    ```
 
    - `VM_NAME` の行があり、インストール完了後は `shut off`
-   - `domblklist` の `vda` が `/var/lib/libvirt/images/${VM_NAME}.qcow2`。`sda` はインストール中は ISO、終了後は空 (`-`)
+   - `domblklist` の `sda` が `/var/lib/libvirt/images/${VM_NAME}.qcow2`。`sdb` はインストール中は ISO、終了後は空 (`-`)
+   - `grep` の出力に `<target dev='sda' bus='sata' rotation_rate='1'/>` がある
+   - `domiflist` の `Model` が `e1000e`
    - `data/var-libvirt/images/` に `${VM_NAME}.qcow2` と ISO がある (root / qemu 所有)
 
    <details>
    <summary>補足: 動作確認</summary>
 
-   - `domblklist` は削除の前にも使う。ディスクのターゲット名 (`vda` など) と CD-ROM (`sda`) の中身が分かる
+   - `domblklist` は削除の前にも使う。ディスクのターゲット名 (`sda` など) と CD-ROM (`sdb`) の中身が分かる
+   - ターゲット名はバスで決まる。SATA はディスクも CD-ROM も `sd*` で、virtio のディスクは `vd*` (virtio で作った VM はディスクが `vda`、CD-ROM が `sda`)
+   - `grep` は定義の `<target>` の行を拾う。CD-ROM の行は `<target dev='sdb' bus='sata'/>` で、`rotation_rate` はディスクにだけ付く
+   - `domiflist` の `Interface` は、VM が止まっている間は `-` (動いている間は `vnet0` など)
    - ディスクファイルは `data/var-libvirt/images/<VM名>.qcow2`。`sudo ls -l` で所有者が root / qemu になっているのは仕様 (手順 10 の補足)
 
    </details>
@@ -730,21 +752,22 @@
 - 削除の注意は補足の[VM を削除するときの注意](#vm-を削除するときの注意)
 
 > [!CAUTION]
-> **この節の手順 5 で、VM の定義・UEFI 変数・ディスク (`vda`) が消え、取り戻せない。** ISO は残る。
+> **この節の手順 5 で、VM の定義・UEFI 変数・ディスク (`sda`) が消え、取り戻せない。** ISO は残る。
 
 1. 削除するディスクと、CD-ROM の中身を確かめる。
 
    ```bash
-   ./kvm.sh virsh domblklist "${VM_NAME:?手順 1 の VM_NAME が空のまま。値を入れて貼り直す}"   # vda = 消すディスク。sda に ISO が入ったままなら次の手順で取り出す
+   ./kvm.sh virsh domblklist "${VM_NAME:?手順 1 の VM_NAME が空のまま。値を入れて貼り直す}"   # sda = 消すディスク。sdb に ISO が入ったままなら次の手順で取り出す
    ```
 
-   - `vda` が消すディスク
-   - `sda` が `-` なら、この節の手順 2 は飛ばす (`--cdrom` でインストールした VM は、インストール後に取り出されている)
+   - `sda` が消すディスク
+   - `sdb` が `-` なら、この節の手順 2 は飛ばす (`--cdrom` でインストールした VM は、Windows 以外はインストール後に取り出されている)
+   - `vda` が出たら virtio で作った VM。この節の `sda` を `vda` に、`sdb` を `sda` に読み替えて貼る ([VM を削除するときの注意](#vm-を削除するときの注意))
 
-1. `sda` に他の VM と共有している ISO が入ったままのときだけ、取り出す。
+1. `sdb` に他の VM と共有している ISO が入ったままのときだけ、取り出す。
 
    ```bash
-   ./kvm.sh virsh change-media "${VM_NAME}" sda --eject --config   # CD-ROM から ISO を取り出す (定義にも反映)
+   ./kvm.sh virsh change-media "${VM_NAME}" sdb --eject --config   # CD-ROM から ISO を取り出す (定義にも反映)
    ```
 
    - 本実行していない
@@ -771,7 +794,7 @@
 1. VM の定義・UEFI 変数・ディスクを消す (取り戻せない)。
 
    ```bash
-   ./kvm.sh virsh undefine "${VM_NAME}" --nvram --storage vda   # 定義・UEFI 変数・ディスクを削除 (ISO は残る)
+   ./kvm.sh virsh undefine "${VM_NAME}" --nvram --storage sda   # 定義・UEFI 変数・ディスクを削除 (ISO は残る)
    sudo ls "${REPO:?手順 1 の REPO が空のまま。値を入れて貼り直す}/data/var-libvirt/images" "${REPO}/data/etc-libvirt/qemu"   # qcow2 と xml が消え、ISO は残っている
    ```
 
@@ -928,6 +951,7 @@
 
 - **目的**: qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナに収め、qemu も libvirt も入れていない軽量なホストで VM を動かし、その画面をホストのデスクトップに表示する
   - VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.sh virsh`。`kvm` コンテナ内の `virt-install` / `virsh --connect qemu:///system` の省略形)、画面の表示は `./kvm.sh viewer` (`kvm-gui` の virt-viewer。ブラウザや Web コンソールは使わない)
+  - VM のディスクは SATA の SSD、NIC は e1000e にする (手順 12。x86_64 のホスト向け)
   - `kvm-gui` は `kvm` の libvirt に共有 unix ソケット経由で接続する。デスクトップの再ログイン後は `kvm-gui` だけを作り直せるので、VM を止めずに済む
   - ディスプレイの無いホストでは `kvm` だけを使う (GUI イメージのビルドも不要)
   - 任意で、アクティビティ (アプリ一覧) の「Virt Viewer」から VM の画面を開けるようにする。VM にホストと同じセグメントの IP (LAN の DHCP) を割り当てることもできる
@@ -950,9 +974,17 @@
     - 「更新」の各手順、ロールバックの手順 8 の `rmi --ignore` とリポジトリの削除
   - **VM** (手順 10〜17、VM を削除する): 物理 AlmaLinux 10.2 + GNOME、SELinux Enforcing で、作成 → 起動 → `viewer` → `reboot` → `shutdown` → `suspend` / `resume` → `destroy` → 稼働中の `down kvm` → `autostart` → `undefine --nvram --storage vda` の一式を通した (PR #26。[付録](#付録-vm-のライフサイクルの確認手順))
     - **ただしそのときの作成は `--location` + キックスタート形で、`--network` も省いていた。** 手順 12 の `--cdrom` 形は README の例を変数形に書き換え、`--network "network=${VM_NETWORK}"` を足したもので、その形では再実行していない
+    - **記録の VM はディスクが virtio で、NIC は `--network` を省いた virt-install の既定だった**。記録のディスクは `vda`
+    - 手順 12 の `--machine q35`・`bus=sata,target.rotation_rate=1`・`model=e1000e` は、物理ホストでは本実行していない
+    - それに合わせて `sda` / `sdb` に付け替えた行 (手順 14、[VM を削除する](#vm-を削除する)の手順 1・2・5、補足) も本実行していない
+    - 手順 12 の引数は、AlmaLinux 10 のコンテナ (virt-install 5.1.0、libvirt 11.10.0、qemu-kvm 10.1.0) で `virt-install --print-xml` と `virsh define` まで確かめた
+    - KVM の無いコンテナなので `--virt-type qemu` を足し、ISO は空のファイルにした。OS を `--osinfo almalinux10` で渡した形と、検出できない形の両方で同じ名前になった。VM は起動していない
+    - そのコンテナでは、ディスク `sda` (`bus='sata' rotation_rate='1'`)・CD-ROM `sdb`・NIC `e1000e` になり、手順 14 の `grep` / `domblklist` / `domiflist` もそのとおりに出た
+    - 同じコンテナで、virtio の VM に `undefine --storage sda` を付けると CD-ROM に入ったままの ISO が消え、SATA の VM では `sda` の qcow2 だけが消えることも確かめた
     - 手順 10・11・14〜17 と「VM を削除する」の各行も README の例を変数形に書き換えたもので、その形では再実行していない
-    - 新しく足した行で、本実行していないもの: 手順 1 の `VM_NETWORK`、手順 14 の `sudo ls -l`、手順 15・17 の `domstate`、[VM を削除する](#vm-を削除する)の手順 2〜4 (`change-media --eject --config`・`shutdown`・`domstate`) と手順 6 (ISO の `sudo rm`) (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)
+    - 新しく足した行で、本実行していないもの: 手順 1 の `VM_NETWORK`、手順 14 の `sudo ls -l`・`dumpxml` の `grep`・`domiflist`、手順 15・17 の `domstate`、[VM を削除する](#vm-を削除する)の手順 2〜4 (`change-media --eject --config`・`shutdown`・`domstate`) と手順 6 (ISO の `sudo rm`) (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)
     - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` / `virsh console`) は未検証。そこで確認したのは `up` 〜 `down` だけ
+    - PR #28 のディスプレイ無しのホストは aarch64 で、手順 12 の SATA と e1000e はその qemu-kvm に無い ([手順 12](#実施手順) の補足)
   - **ブリッジの節**: **通しで実行していない。** `KVM_BRIDGE` の機構 (`bridged` の登録・削除と、`bridged` につないだ VM の疎通) を現行構成で確認した記録は無い
     - 記述は `kvm.sh` の実装 (`check_host_network` / `sync_bridged_network`。[SPEC.md 2.4](SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) / [5.6](SPEC.md#56-ブリッジ同期-sync_bridged_network)) から書いたもの
     - **ブリッジの節の手順 3・4 の nmcli も物理ホストで本実行していない** (物理 AlmaLinux 10.2 + GNOME での通しの確認 PR #15 `ae650c0` は NIC が無線のみで `KVM_BRIDGE` を試していない)
@@ -976,7 +1008,7 @@
 | 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成)、`0cab212` (手順 6〜9 と `down` / `clean`) | PR #28 (現行の 2 コンテナ構成) |
 | 画面表示 | GNOME (Wayland) デスクトップ | 無し (`>> no display found: GUI disabled ...`) |
 | VM の作成・操作 | ライフサイクル一式 (PR #26。[付録](#付録-vm-のライフサイクルの確認手順)、期待結果は [SPEC.md 9.5 節](SPEC.md#95-vm-のライフサイクル)) | 未実施 (`virsh list` が通るところまで。`viewer` が使えないことは [SPEC.md 8 章](SPEC.md#8-既知の制限事項)) |
-| VM の作成形 | `--location` + キックスタート (`OEMDRV` ISO)、`--network` 省略。手順 12 の `--cdrom` 形は未再実行 | — |
+| VM の作成形 | `--location` + キックスタート (`OEMDRV` ISO)、`--network` 省略、ディスクは virtio (`vda`)。手順 12 の `--cdrom` 形は未再実行、SATA の SSD / e1000e はコンテナで XML まで確認 | — |
 | ゲスト OS | AlmaLinux 10.2 (boot ISO `AlmaLinux-10.2-x86_64-boot.iso`) | — |
 | ブリッジの節 (`KVM_BRIDGE`) | 未検証 (NIC が無線のみ) | 未検証 |
 | アクティビティの節 | 旧 firefox / virt-manager のランチャーで一巡 (PR #15)。現行の Virt Viewer エントリは本実行記録なし (PR #25 は静的検査のみ) | 対象外 (アクティビティが無い) |
@@ -1058,8 +1090,13 @@
 - **`--noautoconsole`**: `kvm` コンテナに virt-viewer が無いため。画面は `./kvm.sh viewer` で開く
 - **`--osinfo detect=on,require=off`**: ISO から OS を検出し、検出できなくても中断しない。OS 名を渡すなら `--osinfo list` の候補から選ぶ
 - **`--network` は明示する**: 省くと virt-install がホストの既定経路からつなぎ先を選び、ブリッジのあるホストでは `default` にならない。手順 1 の `VM_NETWORK` (既定 `default`) で決め、[ブリッジの節](#vm-をホストのブリッジにつなぐ-任意)を通したホストでは `bridged` を選べるようにした
+- **ディスクは SATA の SSD、NIC は e1000e**: 手順 12 で `--machine q35`、`--disk` に `bus=sata,target.rotation_rate=1`、`--network` に `model=e1000e` を付けて固定する
+  - ゲストには、準仮想化の virtio ではなく実機と同じ種類の装置 (AHCI の SATA、Intel 82574L の NIC) に見える。virtio のドライバが無い OS でも扱える (性能は一般に virtio より低い)
+  - 付けないと、virt-install は `--osinfo` の検出結果でマシン (q35 / i440fx)・ディスク・NIC を選ぶ。明示して、ISO によらず同じ構成にする
+  - ターゲット名はディスクが `sda`、`--cdrom` の CD-ROM が `sdb`。削除 (`--storage sda`) と CD-ROM の取り出し (`change-media … sdb`) はこの名前で指定する
+  - x86_64 のホスト向け。aarch64 の qemu-kvm には SATA (AHCI) と e1000e が入っていない ([手順 12](#実施手順) の補足)
 - **ISO は `data/var-libvirt/images/` に置く**: ホストの `data/var-libvirt` が `kvm` コンテナの `/var/lib/libvirt` なので、コンテナ内では `/var/lib/libvirt/images/` に見える。手順 12 の `--cdrom` に渡すのはコンテナ内のパス
-- **削除は `undefine --nvram --storage vda`**: `--remove-all-storage` は CD-ROM に入ったままの ISO も消すので、消すディスクを `--storage` で指定する。`--nvram` は UEFI の VM に必須で、BIOS の VM に付けても害は無い
+- **削除は `undefine --nvram --storage sda`**: `--remove-all-storage` は CD-ROM に入ったままの ISO も消すので、消すディスクを `--storage` で指定する。`--nvram` は UEFI の VM に必須で、BIOS の VM に付けても害は無い
 
 ### 環境変数
 
@@ -1157,9 +1194,14 @@ Wi-Fi の NIC は (4 アドレス形式などの例外を除き) 自分以外の
 
 - UEFI の VM (`<os firmware='efi'>`) は `--nvram` が無いと `Cannot undefine domain with NVRAM/varstore` で失敗する。BIOS の VM に付けても害は無い
 - `--remove-all-storage` は CD-ROM に入ったままの ISO も削除する
-  - 複数の VM で共有している ISO を消さないように、`--storage vda` のように消すディスクを指定する
-  - または先に `./kvm.sh virsh change-media <VM名> sda --eject --config` で取り出す (`--cdrom` でインストールした VM はインストール後に取り出されているが、後から入れた場合は残る)
-- `undefine --nvram --storage vda` で消えるのは定義 (`data/etc-libvirt/qemu/<VM名>.xml`)・UEFI 変数 (`data/var-libvirt/qemu/nvram/<VM名>_VARS.fd`)・`vda` のディスクだけで、ISO は残る ([SPEC.md 9.5 節](SPEC.md#95-vm-のライフサイクル))
+  - 複数の VM で共有している ISO を消さないように、`--storage sda` のように消すディスクを指定する
+  - または先に `./kvm.sh virsh change-media <VM名> sdb --eject --config` で取り出す (`--cdrom` でインストールした VM は、Windows 以外はインストール後に取り出されているが、後から入れた場合は残る)
+- `undefine --nvram --storage sda` で消えるのは定義 (`data/etc-libvirt/qemu/<VM名>.xml`)・UEFI 変数 (`data/var-libvirt/qemu/nvram/<VM名>_VARS.fd`)・`sda` のディスクだけで、ISO は残る ([SPEC.md 9.5 節](SPEC.md#95-vm-のライフサイクル))
+  - SPEC.md 9.5 節の記録 (`lctest`) は virtio の VM なので、そこでは `vda` を指定している
+- ターゲット名は作ったときのバスで決まる。手順 12 の VM はディスクが `sda`・CD-ROM が `sdb`、virtio で作った VM はディスクが `vda`・CD-ROM が `sda`
+  - virtio の VM に `--storage sda` を付けると、CD-ROM に入ったままの ISO が消え、qcow2 は残る
+  - CD-ROM が空なら `Volume 'sda' was not found in domain's definition.` で止まり、何も消えない
+  - そのため、[VM を削除する](#vm-を削除する)の手順 1 で `vda` が出たら、`sda` を `vda` に、`sdb` を `sda` に読み替える (どちらも AlmaLinux 10 のコンテナで確かめた)
 
 ### 完了時点の状態
 
@@ -1184,8 +1226,8 @@ $ ./kvm.sh virsh list --all
 $ ./kvm.sh virsh domblklist <VM名>
  Target   Source
 ------------------------------------------------
- vda      /var/lib/libvirt/images/<VM名>.qcow2
- sda      -
+ sda      /var/lib/libvirt/images/<VM名>.qcow2
+ sdb      -
 $ ./kvm.sh virsh dominfo <VM名> | grep -i autostart
 Autostart:      enable
 $ sudo ls data/var-libvirt/images data/var-libvirt/qemu/nvram data/etc-libvirt/qemu data/etc-libvirt/qemu/autostart
@@ -1201,6 +1243,7 @@ data/etc-libvirt/qemu/autostart:
 
 - この出力例は `virsh` の表示形式から組み立てたもので、そのまま取った実測ではない。列の幅などは異なり得る
 - `./kvm.sh up` で `kvm` が起動すると `<VM名>` は `running (booted)` になる
+- NIC は `domiflist` の `Model` が `e1000e`、ディスクは定義で `bus='sata'`・`rotation_rate='1'` ([手順 14](#実施手順))
 - 「VM を削除する」まで行うと `<VM名>.qcow2` / `<VM名>.xml` / `<VM名>_VARS.fd` が消え、ISO だけが残る
 
 ### 注意点
@@ -1231,7 +1274,8 @@ data/etc-libvirt/qemu/autostart:
   - GUI ユーザーはホストユーザーの写しでパスワード無し。`data/` は空のときだけ seed
 - **コンテナ名は `kvm` と `kvm-gui` に固定** (スクリプト内の変数名は `KVM_CONTAINER` / `GUI_CONTAINER`。`NAME` は他の用途と紛れるため避けている)。イメージ名も `localhost/kvm-container/{kvm,gui}` に固定
 - **`viewer` は `up` を経由する**: `kvm` が止まっていれば起動し、表示先が変わっていれば `kvm-gui` を作り直してから virt-viewer を開く
-- **削除時の共有 ISO**: `--remove-all-storage` は使わない。`domblklist` で確認して `--storage vda` ([VM を削除するときの注意](#vm-を削除するときの注意))
+- **削除時の共有 ISO**: `--remove-all-storage` は使わない。`domblklist` で確認して `--storage sda` ([VM を削除するときの注意](#vm-を削除するときの注意))
+- **VM を作るのは x86_64 のホスト**: 手順 12 の SATA (AHCI) と e1000e は、aarch64 の qemu-kvm に無い ([手順 12](#実施手順) の補足)
 - **SPICE は無い**: グラフィックスは VNC。`--graphics spice` は使えない
 - **`--network` を省いた場合**: ホストの既定経路がブリッジ上にあると `default` (NAT) にならない。本書の手順 12 は `VM_NETWORK` で明示しているので、この挙動に当たるのは `--network` を省いて自分で `virt-install` したときだけ
 - **`down` が VM をシャットダウンしない版から更新した場合**: VM を止めてから `kvm` イメージを作り直す ([更新](#更新))
@@ -1243,7 +1287,8 @@ data/etc-libvirt/qemu/autostart:
 - [CLAUDE.md](../CLAUDE.md) — 変更時の注意点 (壊しやすい不変条件の理由、静的検査の対象ファイル)
 - `./kvm.sh` (引数なし) — サブコマンドと環境変数の一覧 (`kvm.sh` 冒頭のヘッダコメント)
 - `desktop/kvm-virt-viewer.desktop` — アクティビティのランチャーのテンプレート
-- `man virt-install` (`--cdrom` / `--location` / `--osinfo` / `--network`)、`man virsh` (`shutdown` / `destroy` / `autostart` / `undefine` / `change-media` / `domblklist` / `net-list` / `net-dumpxml` / `net-undefine` / `domiflist`)
+- `man virt-install` (`--cdrom` / `--location` / `--osinfo` / `--machine` / `--disk` / `--network`)、`man virsh` (`shutdown` / `destroy` / `autostart` / `undefine` / `change-media` / `domblklist` / `dumpxml` / `net-list` / `net-dumpxml` / `net-undefine` / `domiflist`)
+- [libvirt: Domain XML format](https://libvirt.org/formatdomain.html) — ディスクの `<target>` の `bus` / `rotation_rate`、NIC の `<model>`
 - `man nmcli` / `man nm-settings-nmcli` (`bridge`、`bridge-slave`、`ipv4.method`)
 
 ---
@@ -1329,6 +1374,7 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 #### 未確認事項
 
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
+- aarch64 のホストで、手順 12 が SATA / e1000e のところで止まること (qemu-kvm のビルド設定からの想定)
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの手順 8 の `sudo podman rmi --ignore …` とリポジトリの削除、更新の 3 項目と `git pull --ff-only` からの通常更新
 - 手順 2 の `sudo dnf install`、手順 4 の `git clone` (他の新規の行と「表示先が変わったとき」の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
@@ -1391,6 +1437,10 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 
 - 手順 12 の `--cdrom` 形での通し (作成からインストール完了まで)。検証記録は `--location` + キックスタート形だけ
 - 手順 12 の `--network "network=${VM_NETWORK}"` (`default` / `bridged` のどちらも。検証記録は `--network` を省いた形だけ)
+- 手順 12 の `--machine q35`・SATA の SSD・e1000e での作成とインストール。コンテナで確かめたのは XML の生成と `define` まで
+- SATA の SSD / e1000e の VM で、ゲストがディスクを非回転 (SSD) として扱い、e1000e で通信できること
+- 手順 14 の `dumpxml` の `grep` と `domiflist`、「VM を削除する」の `sda` / `sdb` の行 (手順 1・2・5) を物理ホストで流すこと
+- スパースのディスクに付く `discard='unmap'` で、ゲストの TRIM がホストの qcow2 に届くこと
 - 「VM を削除する」の手順 2〜4 (`change-media --eject --config`、`shutdown`、`domstate`) と手順 6 (ISO の `sudo rm`)
 - ディスプレイ無しのホストでの `./kvm.sh virsh console` (ISO のインストーラがシリアルに出るかも含む)
 - 手順 1 (旧 setup.md と旧 vm.md の手順 1 をまとめた形) と手順 10 の `ls -l`、手順 14〜17 の変数形の行と、`sudo ls -l` / `domstate` の新規行
