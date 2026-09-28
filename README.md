@@ -14,7 +14,7 @@ VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.
 | 節 | 用途 | 使うサブコマンド |
 |---|---|---|
 | [手順 1〜9](docs/setup.md#実施手順) | podman と git だけのホストにこのリポジトリを clone し、イメージをビルドしてコンテナを起動する | `build` / `up` |
-| [手順 10〜17](docs/setup.md#実施手順) | `virt-install` で VM を作り、virt-viewer で画面を見て、`virsh` で起動・停止・自動起動する | `virt-install` / `viewer` / `virsh` |
+| [手順 10〜17](docs/setup.md#実施手順) | x86_64 のホストで、`virt-install` で VM (ディスクは SATA の SSD、NIC は e1000e) を作り、virt-viewer で画面を見て、`virsh` で起動・停止・自動起動する | `virt-install` / `viewer` / `virsh` |
 | [VM をホストのブリッジにつなぐ (任意)](docs/setup.md#vm-をホストのブリッジにつなぐ-任意) | VM にホストと同じセグメントの IP を割り当てる (NetworkManager のブリッジ) | `KVM_BRIDGE=… ./kvm.sh up` |
 | [アクティビティから Virt Viewer を起動する (任意)](docs/setup.md#アクティビティから-virt-viewer-を起動する-任意) | GNOME のアプリ一覧に「Virt Viewer」を置く | `install-desktop` |
 | [表示先が変わったとき](docs/setup.md#表示先が変わったとき-再ログイン後) | 再ログイン後に `kvm-gui` だけを作り直す (VM は動いたまま) | `up gui` |
