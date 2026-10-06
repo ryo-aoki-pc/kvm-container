@@ -8,6 +8,7 @@
 > - **ホストの `sudo` は、パスワードを聞かれずに実行できるようにしておく**。本書は、どのブロックでも `sudo` が止まらない前提で書いてある。sudoers の設定は読者が行う (書き方は扱わない。権限上の意味は [SPEC.md 7 章](SPEC.md#7-セキュリティ考慮事項))
 > - **VM を作るなら、インストールに使う ISO を先にホストにダウンロードしておく** ([導入の手順 1](#導入する-1-度だけ) でそのパスを入れる)
 > - **VM を作るのは x86_64 のホスト**。[VM 作成の手順 3](#vm-を作る-vm-ごとに-1-度) で使う SATA と e1000e は、aarch64 の qemu-kvm には無い (VM 作成の手順 3 の補足)
+> - **CPU の仮想化支援 (SVM / VT-x) が使えるホストが必要**。VM の中で実行するなら、外側のハイパーバイザーがネストした仮想化をゲストへ提供していること。提供されない VM ではイメージをビルドできても `up` は通らない
 > - **[導入の手順 2](#導入する-1-度だけ) には `[y/N]` の確認がある**。答えて、インストールが終わってから導入の手順 3 を貼る
 > - **[VM 作成の手順 4](#vm-を作る-vm-ごとに-1-度) と [VM 利用の手順 3](#vm-を使う-繰り返し) は、ホストのデスクトップにウィンドウが開く**。GNOME にログインした端末から行い、ウィンドウを閉じてから次の手順を貼る。ディスプレイの無いホストでは画面は出ない (VM 作成の手順 4 の注意)
 > - **[ブリッジの節](#vm-をホストのブリッジにつなぐ-任意)の手順 4 と[ロールバック](#ロールバック)の手順 4 は、GNOME の端末 (コンソール) から単独で貼る**。NIC の接続を切り替えるので、その NIC 越しの ssh は切れる
@@ -198,7 +199,7 @@
    - `>> ready. VMs: …` が出れば `kvm` は起動している
    - 画面のあるホストでは、続けて `>> kvm-gui started. VM screen: ./kvm.sh viewer [VM]` が出る
    - 画面の無いホストでは `>> no display found: GUI disabled (manage the VMs with ./kvm.sh virsh / virt-install)` が出る。これで正常
-   - `!! /dev/kvm not found …` で止まったら、ファームウェアの SVM (AMD) / VT-x (Intel) を見直す
+   - `!! /dev/kvm not found …`、または `modprobe: ERROR: could not insert 'kvm_amd': Operation not supported` などで止まったら、ファームウェアの SVM (AMD) / VT-x (Intel) を見直す。VM の中なら、外側のハイパーバイザーがネストした仮想化を提供しているかも確認する。コンテナの `--privileged` だけでは CPU の仮想化支援を足せない
    - `!! virbr0 already exists on the host …` は警告だけで、`kvm` は起動してしまう
    - 前回のコンテナの残骸なら `./kvm.sh down` → `sudo ip link del virbr0` → `./kvm.sh up` の順にやり直す ([注意点](#注意点))
    - **次の手順は、`>> ready.` が出てから貼る**
@@ -918,6 +919,7 @@
   - 導入の手順 1 で ISO のパスと VM 名を決め、以降のコマンドはそのまま貼る
   - 読者が書き換えるのは `ISO` だけ (ブリッジの節では `NIC` も)。clone 先・VM 名・メモリ・vCPU・ディスク・ネットワークは既定のままでもよい
 - **状態**:
+  - **現行版の新規 VM 検証 (2026-10-06)**: `5cf5712` から clone し、AlmaLinux 10.2 / x86_64 / SELinux Enforcing の VM で依存の確認と `kvm` / `gui` イメージのビルドを完了した。起動はネストした仮想化が提供されないため `modprobe kvm_amd` で停止した。VM 内でのコンテナ起動・VM のライフサイクルを検証済みとは扱わない ([今回の付録](#付録-新規-almalinux-10-vm-での導入検証-2026-10-06))
   - **導入** (導入の手順 1〜9、再ログインしたとき、更新、ロールバックの手順 5〜7): 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
     - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
     - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
@@ -1396,3 +1398,15 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 - 更新の手順 2 を `KVM_BRIDGE=` 付きの `up` にしたとき、`bridged` が残ること
 - `export KVM_BRIDGE=br0` にしたときの `viewer` / `up` の挙動
 - 既存 VM の `bridged` → `default` の付け替え手順
+
+---
+
+### 付録: 新規 AlmaLinux 10 VM での導入検証 (2026-10-06)
+
+**対象**: `5cf5712` の手順と実装。公式 ISO の Workstation クリーンインストールのスナップショットから、新規の `alma10-current-20261006-containers` を作った。AlmaLinux 10.2 / x86_64 / kernel `6.12.0-211.61.1.el10_2.x86_64` / SELinux Enforcing。外側は Windows 11 / VirtualBox 7.2.20 / Hyper-V NEM。
+
+- 導入の依存の確認、公開リポジトリの clone、実行ユーザー・SELinux・画面無しの分岐を通した。Podman 5.8.2 / Git 2.52.0。
+- 導入の手順 6 の `kvm` イメージをビルドできた。画面の無いシェルなので手順 7 は本文の条件で飛ばしたが、追加で `./kvm.sh build gui` を実行し、現行の `gui` イメージもビルドできた。
+- 導入の手順 8 の `./kvm.sh up` は `>> loading kvm module` の後、`modprobe: ERROR: could not insert 'kvm_amd': Operation not supported`、終了 1 で止まった。CPU の SVM / VT-x が見えず、`/dev/kvm` は無い。外側がネストした仮想化を提供しないことによる前提不足で、イメージのビルド失敗ではない。
+- この結果から、手順冒頭に CPU の仮想化支援と VM 内でのネストした仮想化の前提を明記し、手順 8 のエラー説明に実際の `modprobe` の停止も加えた。
+- ISO の取り込み、導入の手順 9、コンテナの実起動と `running` の確認、VM の作成・操作・削除、GUI 接続、ブリッジ、更新・全ロールバックは、この VM では実行していない。以前の物理ホストの記録を、この VM の結果とは扱わない。
