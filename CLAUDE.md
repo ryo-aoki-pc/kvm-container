@@ -42,7 +42,8 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 ドキュメントの構成:
 
-- `README.md` は案内・節の一覧と記法、`docs/setup.md` は実施手順・任意のブリッジ・削除・更新・ロールバック・変更後の確認だけを載せる。
+- `README.md` は概要・シナリオの一覧、`docs/README.md` は手順・参照情報・検証記録・保守ガイドの目的別索引。文書の追加・移動・削除時は両方のリンクを更新する。
+- 手順書の記法は `docs/contributing.md`、`docs/setup.md` は実施手順・任意のブリッジ・削除・更新・ロールバック・変更後の確認だけを載せる。
 - 手順書には操作、必要な前提・分岐・待機条件・注意・期待する結果を残す。過去の環境・実施日・対象コミット・実出力・結果・失敗・未確認事項は `docs/verification/setup.md` に記録し、手順書に重ねて載せない。
 - 選定理由・技術的説明・コマンドと環境変数の一覧は `docs/reference/setup.md`、実装の仕様は `docs/SPEC.md` に置く。手順書の冒頭から検証記録と参照情報へリンクする。
 - 変更後の確認は手順書の「変更後に確認する」の物理 GNOME / ディスプレイ無し / VM ライフサイクルを使う。SPEC 9 章は期待結果の仕様であり、過去の実測記録とは分ける。
@@ -129,4 +130,4 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
 - 挙動を変えたら該当する手順書 (`docs/setup.md`)・参照情報 (`docs/reference/setup.md`)・検証記録 (`docs/verification/setup.md`) と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
 - 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
-  `docs/reference/setup.md`「環境変数」の表 (と `README.md` 記法の一覧行) の 3 箇所に反映する。
+  `docs/reference/setup.md`「環境変数」の表 (と `docs/contributing.md` 記法の一覧行) の 3 箇所に反映する。
