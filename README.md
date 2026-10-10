@@ -4,7 +4,7 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 qemu も libvirt も入れていない軽量なホストで VM を動かして、その画面をホストのデスクトップ (GNOME Wayland) に表示する。
 VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.sh virsh`)、画面は virt-viewer (`./kvm.sh viewer`)。ブラウザや Web コンソールは使わない。
 手順書は導入・VM の作成・利用・再ログイン後のシナリオと、変更後の確認を番号付きリストで載せている。検証結果は [検証記録](docs/verification/setup.md)、背景や実装の説明は [参照情報](docs/reference/setup.md) に分けている。
-実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [docs/SPEC.md](docs/SPEC.md)、変更時の注意は [CLAUDE.md](CLAUDE.md)。
+実装の仕様 (CLI・環境変数・マウント・起動/停止シーケンス・不変条件、図付き) は [docs/SPEC.md](docs/SPEC.md)、変更時の注意は [AGENTS.md](AGENTS.md)。
 
 ## 手順書
 
