@@ -7,8 +7,8 @@
 | --- | --- |
 | 対象コミット | main (PR 36「実施手順をシナリオに分け、アクティビティからの起動などを削除する」まで。付録 B) |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と docs/setup.md の手順書、CLAUDE.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (実施手順は 1 度だけ行うものと繰り返すものをシナリオに分け、任意の節にブリッジ、変更後の確認手順は付録)、CLAUDE.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
+| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と docs/setup.md の手順書、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (実施手順は 1 度だけ行うものと繰り返すものをシナリオに分け、任意の節にブリッジ、変更後の確認手順は付録)、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
@@ -376,7 +376,7 @@ flowchart LR
 | グループ | `libvirt` の gid は `base` 段で 985 に固定 (`LIBVIRT_GID`)。GUI ユーザーは `gui-user-setup` が両イメージで `libvirt` に入れる | `kvm-gui` 側のユーザーがソケットに届くには gid の一致が必要 |
 | qemu.conf | `libvirt-conf` が `security_driver = "none"`、`namespaces = []` を設定 | コンテナ内の qemu にゲストの SELinux ラベル付けと VM ごとのマウント名前空間は使えない |
 | 適用方法 | `libvirt-conf` の `set_key`: `^#?key = ` の行があれば置換、無ければ末尾に追記。それ以外の行は触らない | `/etc/libvirt` は `data/etc-libvirt` で空のときしか seed されないため、ビルド時に書いても既存の `data/` には届かない。起動ごとの冪等適用なら旧 `data/` もそのまま使える |
-| 診断 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` が通ればコンテナをまたぐ接続は正常 (CLAUDE.md の回帰テスト) | |
+| 診断 | `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` が通ればコンテナをまたぐ接続は正常 (AGENTS.md の回帰テスト) | |
 
 ## 4. 外部インターフェース仕様
 
