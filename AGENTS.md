@@ -4,6 +4,12 @@
 
 利用者への回答・質問・報告は、常に日本語で書く（コードのコメントなどの言語は、このファイルのほかの決まりに従う）。
 
+## 導入手順の正本
+
+Windows 11・AlmaLinux 10 の導入・利用・更新・任意操作は、setup-notes の [windows-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/windows-setup.md) と [almalinux-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md) に集約する。既存の手順も対象とし、このリポジトリには移動先の案内・設定仕様・開発者検査・参考資料・検証記録・ロールバックを残す。
+
+以下の旧手順書を参照する規則は、実行手順については上の正本へ適用する。操作を変えたら正本・案内・参照情報を同期し、過去の検証本文は保持する。共通 bash 設定が読むツールの初期化を `~/.bashrc` に直接追記しない。
+
 ## このリポジトリについて
 
 qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (podman, root) に収め、軽量なホストで VM を動かして
@@ -29,7 +35,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 ```
 
 検証は自動化されていない。変更後は `docs/setup.md` の「変更後に確認する」の手順 (物理 AlmaLinux 10 GNOME / ディスプレイ無し / VM のライフサイクル) を
-手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者級の確認は `docs/setup.md` の導入の手順 9。
+手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者の確認は正本の「kvm-container を導入する」の最終手順。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
 `sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list` はコンテナをまたぐ libvirt 接続の回帰テスト。
@@ -44,7 +50,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 ドキュメントの構成:
 
-- `README.md` は案内・節の一覧と記法、`docs/setup.md` は実施手順・任意のブリッジ・削除・更新・ロールバック・変更後の確認だけを載せる。
+- `README.md` と `docs/setup.md` は正本への案内。開発者検査は `docs/setup.md`、ロールバックは `docs/extra/setup.md` に残す。
 - 手順書には操作、必要な前提・分岐・待機条件・注意・期待する結果を残す。過去の環境・実施日・対象コミット・実出力・結果・失敗・未確認事項は `docs/verification/setup.md` に記録し、手順書に重ねて載せない。
 - 選定理由・技術的説明・コマンドと環境変数の一覧は `docs/reference/setup.md`、実装の仕様は `docs/SPEC.md` に置く。手順書の冒頭から検証記録と参照情報へリンクする。
 - 変更後の確認は手順書の「変更後に確認する」の物理 GNOME / ディスプレイ無し / VM ライフサイクルを使う。SPEC 9 章は期待結果の仕様であり、過去の実測記録とは分ける。
@@ -59,7 +65,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 - 任意の節は実施手順の一覧から案内し、元に戻す操作はロールバックへまとめる。ホストの sudo がパスワードを聞かない前提を実施手順冒頭に明記する。
 - 上から順に貼るだけで通る形にし、clone も手順に含める。画面の有無はブロックで判定する。繰り返すシナリオは導入の手順 1 の変数を貼り直せば先頭から実行できるようにする。
 - 箇条書きは 1 項目に 1 つの事実、末尾の「。」は付けない。アラートは最上位のみで 1 文書 5 個まで、取り戻せない削除は節のリードの `[!CAUTION]` と手順の説明で示す。`[!TIP]` は使わない。
-- 手順は「導入の手順 N」「VM 作成の手順 N」「VM 利用の手順 N」「再ログインの手順 N」のように呼ぶ。同じ節では「この節の手順 N」。手順変更時は README・SPEC・参照情報・検証記録の番号とリンクも追従する。
+- 手順は「導入の手順 N」「VM 作成の手順 N」「VM 利用の手順 N」「再ログインの手順 N」のように呼ぶ。同じ節では「この節の手順 N」。手順変更時は README・SPEC・参照情報の番号とリンクも追従する。過去の検証本文は変更しない。
 - `kvm.sh` の実行時メッセージを引用する箇所は原文のまま揃える。説明が SPEC にある事項は節番号で参照する。括弧は半角の `(…)` の前に空白を置く。
 
 1. **ホスト側 (`kvm.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
@@ -129,7 +135,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 - **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
-- 挙動を変えたら該当する手順書 (`docs/setup.md`)・参照情報 (`docs/reference/setup.md`)・検証記録 (`docs/verification/setup.md`) と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
+- 挙動を変えたら該当する正本の手順と案内 (`docs/setup.md`)・参照情報 (`docs/reference/setup.md`)・検証記録 (`docs/verification/setup.md`) と、`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する) の両方と、`docs/SPEC.md` の該当節 (表・図) を更新する。
 - 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
   `docs/reference/setup.md`「環境変数」の表 (と `README.md` 記法の一覧行) の 3 箇所に反映する。
 
