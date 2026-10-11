@@ -6,9 +6,12 @@
 
 ## 導入手順の正本
 
-Windows 11・AlmaLinux 10 の導入・利用・更新・任意操作は、setup-notes の [windows-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/windows-setup.md) と [almalinux-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md) に集約する。既存の手順も対象とし、このリポジトリには移動先の案内・設定仕様・開発者検査・参考資料・検証記録・ロールバックを残す。
+Windows 11・AlmaLinux 10 の導入・利用・更新・任意操作は、setup-notes の [windows-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/windows-setup.md) と [almalinux-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md) に集約する。既存の手順も対象とする。
 
-以下の旧手順書を参照する規則は、実行手順については上の正本へ適用する。操作を変えたら正本・案内・参照情報を同期し、過去の検証本文は保持する。共通 bash 設定が読むツールの初期化を `~/.bashrc` に直接追記しない。
+- 固有の仕様・他 OS の手順・開発者検査・理由・注意・検証記録・ロールバックが残る文書は保持する
+- 案内だけになった旧文書は削除する。README から上の2冊と[集約対応表](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/dev/consolidation-map.md)へ案内する
+
+文書規則は、Windows・AlmaLinux の実行手順には上の正本へ適用する。操作や移動先を変えたら正本・README・集約対応表・参照情報を同期し、過去の検証本文は保持する。共通 bash 設定が読むツールの初期化を `~/.bashrc` に直接追記しない。
 
 ## このリポジトリについて
 
@@ -50,7 +53,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 ドキュメントの構成:
 
-- `README.md` と `docs/setup.md` は正本への案内。開発者検査は `docs/setup.md`、ロールバックは `docs/extra/setup.md` に残す。
+- `README.md` から正本と集約対応表へ案内する。`docs/setup.md` は正本への案内と開発者検査、ロールバックは `docs/extra/setup.md` に残す。
 - 手順書には操作、必要な前提・分岐・待機条件・注意・期待する結果を残す。過去の環境・実施日・対象コミット・実出力・結果・失敗・未確認事項は `docs/verification/setup.md` に記録し、手順書に重ねて載せない。
 - 選定理由・技術的説明・コマンドと環境変数の一覧は `docs/reference/setup.md`、実装の仕様は `docs/SPEC.md` に置く。手順書の冒頭から検証記録と参照情報へリンクする。
 - 変更後の確認は手順書の「変更後に確認する」の物理 GNOME / ディスプレイ無し / VM ライフサイクルを使う。SPEC 9 章は期待結果の仕様であり、過去の実測記録とは分ける。
