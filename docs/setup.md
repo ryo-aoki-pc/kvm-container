@@ -1,6 +1,6 @@
 # qemu-kvm コンテナ 導入と VM の作成・操作手順 (AlmaLinux 10 / podman、物理 GNOME / ディスプレイ無し)
 
-Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes の2冊に集約した。
+Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に集約した。kvm-container の項は [仮想マシンのセットアップ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) にある（2026-10-15 に AlmaLinux 10 の手順から分けた）。
 
 ## 実施手順
 
