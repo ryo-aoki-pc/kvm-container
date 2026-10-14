@@ -6,7 +6,7 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes の2�
 
 ### 導入する (1 度だけ)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する任意)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する)
 
 ### VM を作る (VM ごとに 1 度)
 
@@ -22,7 +22,7 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes の2�
 
 ## VM をホストのブリッジにつなぐ (任意)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ任意)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ)
 
 ## VM を削除する
 
