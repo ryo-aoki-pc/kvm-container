@@ -6,31 +6,31 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes の2�
 
 ### 導入する (1 度だけ)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)
 
 ### VM を作る (VM ごとに 1 度)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-で-vm-を作る)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)
 
 ### VM を使う (繰り返し)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-を使う)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を使う)
 
 ### 再ログインしたとき (繰り返し)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-gui-を再ログイン後に使う)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-gui-を再ログイン後に使う)
 
 ## VM をホストのブリッジにつなぐ (任意)
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ)
 
 ## VM を削除する
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-を削除する)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を削除する)
 
 ## 更新
 
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を更新する)
+[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を更新する)
 
 ## 変更後に確認する
 

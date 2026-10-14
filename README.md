@@ -14,7 +14,7 @@ VM の作成・操作はコマンドライン (`./kvm.sh virt-install` / `./kvm.
 ## 手順書
 
 
-[AlmaLinux 10 の kvm-container 導入](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する) → VM 作成 → VM 利用の順に行う。ブリッジ・削除・更新も同冊にある。[元の案内と開発者検査](docs/setup.md)・[ロールバック](docs/extra/setup.md)・[検証記録](docs/verification/setup.md)・[仕様](docs/SPEC.md)はこのリポジトリに残す。
+[AlmaLinux 10 の kvm-container 導入](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する) → VM 作成 → VM 利用の順に行う。ブリッジ・削除・更新も同冊にある。[元の案内と開発者検査](docs/setup.md)・[ロールバック](docs/extra/setup.md)・[検証記録](docs/verification/setup.md)・[仕様](docs/SPEC.md)はこのリポジトリに残す。
 
 ## 記法
 
