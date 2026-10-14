@@ -3,8 +3,8 @@
 ## ロールバック
 
 - 上から順に、通した節の分だけ実行する
-- 正本の [導入の手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する任意)で `REPO` を設定した一般ユーザーのシェルで行う
-- ブリッジの設定を戻す場合は [ブリッジの手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ任意)の `BRIDGE`・`NIC` を使う。`NIC_CON` は当時控えた NIC の元の接続名で、現在の `bridge-slave-…` の名前ではない。手順 4 の前に手順 3 で確認する
+- 正本の [導入の手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する)で `REPO` を設定した一般ユーザーのシェルで行う
+- ブリッジの設定を戻す場合は [ブリッジの手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ)の `BRIDGE`・`NIC` を使う。`NIC_CON` は当時控えた NIC の元の接続名で、現在の `bridge-slave-…` の名前ではない。手順 4 の前に手順 3 で確認する
 - ブリッジの節を通したときは、先に `bridged` につないだ VM を止め、`default` に付け替える (本書では扱わない) か[VM を削除する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-を削除する)で消す
 - ブリッジの節を通したときは、この節の手順 4 を GNOME の端末 (コンソール) から単独で貼る。ブリッジを消すと、その NIC 越しの ssh は切れる
 
@@ -35,7 +35,7 @@
 
    - `bridged` が消え、`default` だけならよい
    - `NIC_CON` はブリッジの節の手順 1 で控えた元の接続名
-   - 新しいシェルなら、[導入の手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する任意) と[ブリッジの手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ任意)を貼り直してから、`NIC_CON=` に控えた名前を入れ直す (ブリッジの手順 1 を貼り直すと、`NIC_CON` は `bridge-slave-…` の名前になる)
+   - 新しいシェルなら、[導入の手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-を導入する) と[ブリッジの手順 1](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md#kvm-container-の-vm-をホストのブリッジにつなぐ)を貼り直してから、`NIC_CON=` に控えた名前を入れ直す (ブリッジの手順 1 を貼り直すと、`NIC_CON` は `bridge-slave-…` の名前になる)
    - bridge-slave の接続名は NetworkManager の既定 (`bridge-slave-<NIC>`)。違っていれば `nmcli connection show` で確かめる
    - **次の手順は、`NIC_CON` に元の接続名が入っているのを確かめてから、コンソールで単独で貼る** (ブリッジを消すと、その NIC 越しの ssh は切れる)
 
