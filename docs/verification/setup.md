@@ -7,7 +7,6 @@
 - **状態**:
   - **現行版の新規 VM 検証 (2026-10-06)**: `5cf5712` から clone し、AlmaLinux 10.2 / x86_64 / SELinux Enforcing の VM で依存の確認と `kvm` / `gui` イメージのビルドを完了した。起動はネストした仮想化が提供されないため `modprobe kvm_amd` で停止した。VM 内でのコンテナ起動・VM のライフサイクルを検証済みとは扱わない ([今回の付録](#付録-新規-almalinux-10-vm-での導入検証-2026-10-06))
   - **導入** (導入の手順 1〜9、再ログインしたとき、更新、ロールバックの手順 5〜7): 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
-    - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
     - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
     - `0cab212`: 導入の手順 6・7 → 導入の手順 8 → 導入の手順 9 →「再ログインしたとき」 の `up gui` → 付録の確認行 (`auth_unix_rw` / `getent shadow` / `/dev/dri` / `ausearch`) → `KVM_HOST=headless` での `up gui` / `viewer` の拒否 (exit 1 / 2) → `down` (`virbr0` と `/run/kvm-container` が残らない) → `clean`。clone 先は `~/kvm-container` 以外 (git の worktree)、`viewer` と VM は未実施
   - **ディスプレイの無いホストは PR #28 で通した**
@@ -46,7 +45,6 @@
   - **VM 利用と更新の未実施範囲**:
     - 本実行していない行: VM 利用の手順 1 の `cd "${REPO:?…}" && ./kvm.sh up`、手順 3 の `./kvm.sh viewer "${VM_NAME:?…}"`、手順 6 の `./kvm.sh down`
     - VM 利用の手順 2 の `start` の `${VM_NAME:?…}` と、「導入の手順 1」を指す中断メッセージ (`${VAR:?…}`) は本実行していない
-    - 更新の手順 3 (旧版のランチャーを消す `rm -f`) は本実行していない
   - **アクティビティからの起動・`KVM_SOFTWARE_GL`・`KVM_CLEAN_YES`・音声ソケットの受け渡しを削除した変更** (本実行していない):
     - `kvm.sh` / `container/gui/gui` は `bash -n` と `shellcheck` で確かめた
     - `gui_args` だけを取り出し、runtime dir の中と外の Wayland ソケットで `GUI_ARGS` を確かめた (podman は動かしていない)
@@ -55,7 +53,7 @@
 | 項目 | 物理 AlmaLinux 10 + GNOME | ディスプレイ無し |
 |---|---|---|
 | ホスト | AlmaLinux 10.2 + GNOME (Wayland)、SELinux Enforcing、AMD x86_64 | AlmaLinux 10.2 (Raspberry Pi 5、aarch64)、SELinux Enforcing、podman 5.8.2、グラフィカルセッション外のシェル (`DISPLAY` / `WAYLAND_DISPLAY` 未設定) |
-| 確認した版 | PR #15 (1 コンテナ構成、cockpit の頃)、PR #26 (現行の 2 コンテナ構成)、`0cab212` (導入の手順 6〜9 と `down` / `clean`) | PR #28 (現行の 2 コンテナ構成) |
+| 確認した版 | PR #26 (現行の 2 コンテナ構成)、`0cab212` (導入の手順 6〜9 と `down` / `clean`) | PR #28 (現行の 2 コンテナ構成) |
 | 画面表示 | GNOME (Wayland) デスクトップ | 無し (`>> no display found: GUI disabled ...`) |
 | VM の作成・操作 | ライフサイクル一式 (PR #26。[付録](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-のライフサイクルを確認する)、期待結果は [SPEC.md 9.5 節](../SPEC.md#95-vm-のライフサイクル)) | 未実施 (`virsh list` が通るところまで。`viewer` が使えないことは [SPEC.md 8 章](../SPEC.md#8-既知の制限事項)) |
 | VM の作成形 | `--location` + キックスタート (`OEMDRV` ISO)、`--network` 省略、ディスクは virtio (`vda`)。VM 作成の手順 3 の `--cdrom` 形は未再実行、SATA の SSD / e1000e はコンテナで XML まで確認 | — |
@@ -216,7 +214,6 @@ ip -br addr show "${BRIDGE}"                  # UP で、LAN の DHCP から IP 
 
 ## 表示・ブリッジ・ストレージの検証範囲
 
-- **画面は端末から開く**: アクティビティ (アプリ一覧) からの起動は廃止した。端末の無い `sudo -n` を前提にしたうえ、現行のエントリを本実行できていなかったため
 想定 (物理ホストでは本実行していない):
 - VM: `--network network=bridged` で作った VM は LAN の DHCP から IP を取り、ホストの隣接テーブルには VM 自身の MAC が載る (いずれも未検証)
   - `bridged` につないだ VM がそのとき定義されたままだとどうなるか (起動時に `bridged` が見つからず失敗する想定) は未検証
@@ -227,7 +224,7 @@ ip -br addr show "${BRIDGE}"                  # UP で、LAN の DHCP から IP 
 
 ### 付録: 物理 AlmaLinux 10 + GNOME での確認手順
 
-変更後の回帰確認。**先に [VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) で VM を 1 つ作り、導入の手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](../SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #15 `ae650c0` (1 コンテナ構成) と PR #26 `ba2fee2` (現行)。以下のブロックの `cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
+変更後の回帰確認。**先に [VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) で VM を 1 つ作り、導入の手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](../SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #26 `ba2fee2` (現行)。以下のブロックの `cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
 
 ```bash
 cd "${REPO:?導入の手順 1 の REPO が空のまま。値を入れて貼り直す}"
@@ -308,7 +305,7 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` → `virsh console`)。PR #28 で通したのは `up` 〜 `down` まで
 - aarch64 のホストで、VM 作成の手順 3 が SATA / e1000e のところで止まること (qemu-kvm のビルド設定からの想定)
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
-- ロールバックの手順 7 の `sudo podman rmi --ignore …` とリポジトリの削除、更新の手順 3 (旧版のランチャーの削除) と `git pull --ff-only` からの通常更新
+- ロールバックの手順 7 の `sudo podman rmi --ignore …` とリポジトリの削除、`git pull --ff-only` からの通常更新
 - 導入の手順 2 の `sudo dnf install`、導入の手順 4 の `git clone` (他の新規の行と「再ログインしたとき」 の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
 - `~/kvm-container` に clone したホストでの通し (`0cab212` の実行は git の worktree を clone 先にしたもの)
 
