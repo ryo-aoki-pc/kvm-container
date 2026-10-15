@@ -5,9 +5,9 @@
 
 | 項目 | 内容 |
 | --- | --- |
-| 対象コミット | main (PR 36「実施手順をシナリオに分け、アクティビティからの起動などを削除する」まで。付録 B) |
+| 対象コミット | main |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と手順書 (当時は docs/setup.md。今は setup-notes の virtual-machines.md の「kvm-container」)、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と手順書 (setup-notes の virtual-machines.md の「kvm-container」)、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
 | 他文書との分担 | setup-notes の virtual-machines.md の「kvm-container」= 導入と VM の作成・操作の手順書 (1 度だけ行うものと繰り返すものを項に分ける)、README.md = 概要と手順書の項の一覧、docs/reference/setup.md = 手順の背景、docs/extra/setup.md = ロールバックと注意点、docs/dev/check.md = 変更後の確認の手順、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
@@ -23,7 +23,6 @@
 1. [既知の制限事項](#8-既知の制限事項)
 1. [検証手順](#9-検証手順)
 - [付録 A. ファイル一覧とコンテナ内配置](#付録-a-ファイル一覧とコンテナ内配置)
-- [付録 B. 主要な変更履歴](#付録-b-主要な変更履歴)
 
 ## 1. 概要
 
@@ -71,10 +70,10 @@ flowchart LR
 | 項目 | 理由 (出典) |
 | --- | --- |
 | SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/reference/setup.md「選択した方針」) |
-| Web コンソール (cockpit) とブラウザ (firefox) | 廃止した。VM の操作は CLI、画面は virt-viewer (PR 25) |
+| Web コンソール (cockpit) とブラウザ (firefox) | 使わない。VM の操作は CLI、画面は virt-viewer |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
-| アプリ一覧 (Activities) からの起動 | 廃止した。VM の画面は端末から `kvm.sh viewer` で開く (PR 36) |
-| 音声 | ホストの PulseAudio / PipeWire のソケットは `kvm-gui` に渡さない。VNC の画面を出す virt-viewer では使わない (PR 36) |
+| アプリ一覧 (Activities) からの起動 | 使わない。VM の画面は端末から `kvm.sh viewer` で開く |
+| 音声 | ホストの PulseAudio / PipeWire のソケットは `kvm-gui` に渡さない。VNC の画面を出す virt-viewer では使わない |
 | 自動テスト | テストスイートは無い。検証は docs/dev/check.md の手順を手で流す (9 章) |
 
 ### 1.3 用語
@@ -859,7 +858,7 @@ flowchart TD
 
 ## 6. 設計上の不変条件
 
-以下はいずれも実際の不具合を踏んだ結果その形になっている (付録 B の PR 番号)。理由を理解せずに変えないこと。
+以下はいずれも実際の不具合を踏んだ結果その形になっている。理由を理解せずに変えないこと。
 
 ```mermaid
 flowchart LR
@@ -880,19 +879,19 @@ flowchart LR
     b15["libvirt-guests.service 無しで、または down の待ち時間を SHUTDOWN_TIMEOUT 以下にして kvm を止める"]
   end
   subgraph result ["起きること"]
-    r1["コンテナの logind がホストの bus / systemd --user を作り直し、user@ の停止時に user-runtime-dir@ がホストの Wayland ソケットごと削除 (PR 10。当時は cockpit のログイン/ログアウトで発生)"]
-    r2["コンテナの systemd-tmpfiles がホストの X ソケットを削除 (PR 10)"]
-    r3["abstract unix ソケットがホストの iscsid と衝突し、起動が常に degraded (PR 15)"]
-    r4["ホストの NIC・ブリッジを管理し始める (PR 14)"]
-    r5["podman の eth0 が online にならず 60 秒待って degraded (PR 11)"]
-    r7["virbr0 がホストに残り、次回 default の起動が File exists で失敗 (PR 14)"]
-    r8["SELinux Enforcing で data/ (user_home_t) への書き込みや、spc_t のソケットへの connectto、runtime dir (user_tmp_t) の読み取りが拒否される (PR 15、PR 18)"]
-    r9["GUI ユーザーの user@UID が起動せず、GUI アプリの session bus が無い (PR 2 では cockpit-bridge が落ちてログアウトされた)"]
-    r10["別 pid 名前空間からの接続は SO_PEERCRED の pid が 0 で、polkit がクライアントを識別できず認証失敗 (PR 18)"]
-    r11["両イメージで gid が食い違い、kvm-gui のユーザーが 0660 のソケットに届かない (PR 18)"]
-    r12["data/etc-libvirt は空のときしか seed されないので、既存の data/ に設定が届かない (PR 18)"]
-    r13["前回のソケット・pid・VM 状態が残ってデーモンが混乱する。ディレクトリを消すと起動中の kvm-gui が古い inode を見続ける (PR 18)"]
-    r14["再ログイン後に古い (消えた) Wayland ソケットへ繋ぎ続け、画面に出ない (PR 18)"]
+    r1["コンテナの logind がホストの bus / systemd --user を作り直し、user@ の停止時に user-runtime-dir@ がホストの Wayland ソケットごと削除"]
+    r2["コンテナの systemd-tmpfiles がホストの X ソケットを削除"]
+    r3["abstract unix ソケットがホストの iscsid と衝突し、起動が常に degraded"]
+    r4["ホストの NIC・ブリッジを管理し始める"]
+    r5["podman の eth0 が online にならず 60 秒待って degraded"]
+    r7["virbr0 がホストに残り、次回 default の起動が File exists で失敗"]
+    r8["SELinux Enforcing で data/ (user_home_t) への書き込みや、spc_t のソケットへの connectto、runtime dir (user_tmp_t) の読み取りが拒否される"]
+    r9["GUI ユーザーの user@UID が起動せず、GUI アプリの session bus が無い"]
+    r10["別 pid 名前空間からの接続は SO_PEERCRED の pid が 0 で、polkit がクライアントを識別できず認証失敗"]
+    r11["両イメージで gid が食い違い、kvm-gui のユーザーが 0660 のソケットに届かない"]
+    r12["data/etc-libvirt は空のときしか seed されないので、既存の data/ に設定が届かない"]
+    r13["前回のソケット・pid・VM 状態が残ってデーモンが混乱する。ディレクトリを消すと起動中の kvm-gui が古い inode を見続ける"]
+    r14["再ログイン後に古い (消えた) Wayland ソケットへ繋ぎ続け、画面に出ない"]
     r15["動いている VM が電源断と同じ状態で止まり、次の起動でファイルシステムのジャーナル復旧が走る (9.5 節)"]
   end
   b1 --> r1
@@ -1087,31 +1086,3 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | `.gitignore` | | | | `*.iso` `*.qcow2` `build.log` `data/` |
 | `data/` (git 管理外) | | `kvm`: `/var/lib/libvirt` `/etc/libvirt` `/home/<HOST_USER>`、`kvm-gui`: `/home/<HOST_USER>` | バインドマウント | `up` が作成・seed |
 | `/run/kvm-container/libvirt` (ホスト、非永続) | | 両方 `/run/libvirt` | バインドマウント | `up` が空にし `down` で削除 |
-
-## 付録 B. 主要な変更履歴
-
-不変条件がどの不具合から生まれたかの索引。詳細はコミットメッセージを参照。
-
-| PR | 要旨 | 本書の関連節 |
-| --- | --- | --- |
-| 2 | `systemd-logind` のマスク解除。cockpit ログイン直後の自動ログアウトを修正 | 3.4、6 |
-| 3 | 永続化を named volume からホストディレクトリのバインドマウントに変更 (seed 処理) | 4.6 |
-| 5 | `install-desktop` / `launch` の追加 (PR 36 で削除) | |
-| 8 | Quadlet / sudoers 配置の廃止、コンテナ名・イメージ名・データディレクトリを固定値に | 1.3、3.3 |
-| 9 | cockpit にホストのユーザー名・パスワードでログインできるように (ホストユーザーの写しを作る、ハッシュの env-file 渡し) | 4.3、5.4、7 |
-| 10 | ホストの runtime dir を読み取り専用の別パスにマウント。cockpit ログアウトでホストの `/run/user/UID` が消える問題を修正。GUI ユーザーの linger | 4.4、5.3、6 |
-| 11 | `NetworkManager-wait-online.service` をマスク。起動完了が 1 分遅れて degraded になるのを防ぐ | 3.4 |
-| 13 | ベースイメージを AlmaLinux 10 minimal に変更、明示パッケージを最小化 | 3.4 |
-| 14 | `--network host` と `KVM_BRIDGE` (libvirt ネットワーク `bridged`)、`cockpit-listen-generator`、`kvm-net-teardown.service`、NetworkManager のマスク | 4.5、5.2、5.6 |
-| 15 | 物理 AlmaLinux 10 対応: seed の `label=disable`、`iscsid.socket` のマスク、cockpit 既定ポート 9091、ポート使用中の検出、firefox の URL をポートに追従 | 2.4、3.4、4.5 |
-| 16 | CLAUDE.md の追加 | |
-| 18 | コンテナをサーバ `kvm` とデスクトップクライアント `kvm-gui` に分割。マルチステージ Containerfile、`container/{common,kvm,gui}/`、共有 `/run/libvirt` とソケット権限による認証 (`auth_unix_rw = "none"`、`libvirt` の gid 固定)、`kvm-libvirt-conf.service`、`kvm.sh` のロール引数、セッション判定による `kvm-gui` だけの作り直し、ハッシュは `kvm` にだけ渡す | 1.1、3.2〜3.5、4.1、4.3、4.4、5.1、5.2、6 |
-| 20 | イメージのテンプレートユーザー `admin` を廃止し、`gui-user-setup` が起動時に GUI ユーザーを作成する。`data/home` の seed 元は `/etc/skel` | 3.4、4.6、5.3、5.4 |
-| 24 | virt-manager を削除。`kvm-gui` の `data/var-libvirt` (ro) マウントも削除 | 3.3、4.4 |
-| 25 | cockpit と firefox を廃止。VM の操作は `kvm.sh virsh` / `virt-install` (新設)、画面は virt-viewer (`viewer` は VM 名省略で選択ダイアログ)。パスワードハッシュ・sudoers・`libvirtdbus`・`COCKPIT_*`・generator・`cockpit.conf`・`hostname` を削除し、ランチャーを `kvm-virt-viewer.desktop` に | 1.1、2.3、2.4、3.1〜3.5、4.1〜4.3、4.5、5.1、5.3〜5.5、6、7、8 |
-| 26 | `down` で VM を先にシャットダウンする (`libvirt-guests`、`KVM_STOP_TIMEOUT`)。VM のライフサイクルの確認手順 | 3.5、5.2、9.5 |
-| 27 | ドキュメントを手順書 4 本に再編し、README を一覧にする | |
-| 28 | WSL2/WSLg 対応と `host_*` フックを削除し、`KVM_HOST` を `auto\|headless` に縮小。ディスプレイ無しのホストで通し確認 | 1.1、2.1、2.2、4.2、5.6、9.3 |
-| 31 | 手順書を実地検証して確認コマンドを修正し、ホストの `sudo` をパスワード無し前提に統一 | 2.3、7 |
-| 34 | 手順書 4 本を docs/setup.md の 1 本にまとめ、`KVM_BRIDGE` のエラーの参照先を docs/setup.md にする | 2.4 |
-| 36 | 手順書の実施手順を、1 度だけ行うもの (導入、VM の作成) と繰り返すもの (VM の利用、再ログイン後) のシナリオに分ける。アクティビティからの起動 (`install-desktop` / `uninstall-desktop` / `launch`、`desktop/`)・`KVM_SOFTWARE_GL`・`KVM_CLEAN_YES`・音声ソケットの受け渡し (`PULSE_SERVER`、`add_ro_mount`)・旧版からの移行の記述を削除 | 1.2、2.3、3.1〜3.4、4.1〜4.4、4.7、7、8、9.2、9.4、付録 A |

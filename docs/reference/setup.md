@@ -89,7 +89,7 @@
 - `ISO` はホスト側のパス。`ISO=~/Downloads/...` のように `~` で始めれば代入時に展開される (引用符で囲むと展開されない)。この項の手順 2 でコピーし、手順 4 では `basename` だけをコンテナ内のパスに付ける
 - `ISO` は絶対パス (`~` 始まりを含む) で入れる。相対パスで入れると、この手順の最後の行の `cd` の後で見つからなくなる
 - `VM_NAME` は libvirt のドメイン名で、ディスク `/var/lib/libvirt/images/<VM名>.qcow2`、定義 `data/etc-libvirt/qemu/<VM名>.xml`、UEFI 変数 `data/var-libvirt/qemu/nvram/<VM名>_VARS.fd` の名前になる。削除 (`undefine`) もこの名前で行う
-- `VM_MEMORY` は MiB、`VM_DISK` は GiB (`virt-install` の単位)。既定値は旧 README の例 (`alma10` / 4096 / 2 / 20)
+- `VM_MEMORY` は MiB、`VM_DISK` は GiB (`virt-install` の単位)
 - ディスクのバス (SATA の SSD) と NIC のモデル (e1000e) は変数にしていない。この項の手順 4 のコマンドに直接書いてある
 - `VM_NETWORK` はこの項の手順 4 の `--network network=` に渡す libvirt ネットワークの名前。`default` は NAT (`virbr0`、192.168.122.0/24)、`bridged` は[ブリッジ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ)で `KVM_BRIDGE` を付けて登録したホストのブリッジ
 
@@ -266,7 +266,7 @@
 
 - **コマンドライン + virt-viewer**: VM の作成・操作は `kvm` コンテナ内の `virt-install` / `virsh` をパススルーし、画面は `kvm-gui` の virt-viewer で出す
   - `./kvm.sh virt-install` は `sudo podman exec -it kvm virt-install --connect qemu:///system`、`./kvm.sh virsh` は `sudo podman exec -it kvm virsh -c qemu:///system` の省略形 ([SPEC.md 4.1 節](../SPEC.md#41-cli-kvmsh-サブコマンド-ロール-))。ホストに virt-install / virsh を入れない
-  - ブラウザや Web コンソール (cockpit) は廃止した (PR #25)
+  - ブラウザや Web コンソール (cockpit) は使わない
   - RHEL 10 系の qemu-kvm には SPICE が無いので、グラフィックスは VNC (下の `--graphics vnc`)
 - **`kvm` は `--privileged --network host`**: KVM、libvirt の `default` ネットワーク (NAT / dnsmasq)、ホストのブリッジへの接続のため
   - `kvm-gui` は非特権だが `--security-opt label=disable`。SELinux Enforcing のホストで、特権コンテナが作った unix ソケットへ接続し、ホストの runtime dir を読むため
@@ -285,11 +285,11 @@
   - そのため空のときだけ、`kvm.sh up` が `kvm` イメージ内の初期内容 (設定ファイル、ディレクトリ構成、所有者) をコピーしてから起動する ([導入 / 手順 8 の補足](#導入--手順-8-補足-起動))
 - **分岐はブロックの中で判定する**: 導入で画面の有無によって変わるのは、GUI イメージのビルド (導入の手順 7) と `kvm-gui` の確認 (導入の手順 9) だけ。どちらもブロックの中で判定し、どちらのホストでも同じブロックを上から貼れるようにした
   - VM の画面を出す VM を作るの手順 5 と VM を使うの手順 4 は、ディスプレイの無いホストでは `!! no display found ...` で終わる
-- **シナリオごとに項を分ける**: 1 度だけ行う導入と VM の作成、繰り返し行う VM の利用と再ログイン後の作り直しを、正本の別の項にした
+- **シナリオごとに項を分ける**: 1 度だけ行う導入と VM の作成、繰り返し行う VM の利用と再ログイン後の作り直しを、正本の別の項に置く
   - 手順の番号は項ごとに 1 から数え、ほかの項の手順は「導入の手順 1」「VM を使うの手順 2」のように呼ぶ
   - どの項も手順 1 で変数を設定するので、新しいシェルでもその項の手順 1 から始められる
-- **画面は端末から開く**: アクティビティ (アプリ一覧) からの起動は廃止した。端末の無い `sudo -n` を前提にしたうえ、画面を端末から開く方式に統一したため
-  - `KVM_SOFTWARE_GL` (ソフトウェア描画の強制) と `KVM_CLEAN_YES` (`clean` の確認の省略) も廃止した。`/dev/dri` が無いホストでは、今までどおり自動でソフトウェア描画になる
+- **画面は端末から開く**: VM の画面は端末から `./kvm.sh viewer` で開く
+  - `/dev/dri` が無いホストでは、自動でソフトウェア描画になる
   - ホストの音声 (PulseAudio / PipeWire) のソケットは `kvm-gui` に渡さない。VNC の VM 画面を出す virt-viewer では使わないため
 - **`--graphics vnc`**: RHEL 10 系の qemu-kvm には SPICE が無いため。VNC は `kvm` がホストの loopback で listen し、`kvm-gui` の virt-viewer が libvirt 経由で接続する
 - **`--noautoconsole`**: `kvm` コンテナに virt-viewer が無いため。画面は `./kvm.sh viewer` で開く

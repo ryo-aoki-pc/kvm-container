@@ -6,7 +6,7 @@
 # kvm.sh down waits longer than SHUTDOWN_TIMEOUT before podman kills the container (KVM_STOP_TIMEOUT in kvm.sh)
 URIS=qemu:///system
 # the packaged default is "start", which restarts at the next "up" every guest that was running at "down".
-# Leave that to each VM's autostart flag (virsh autostart), as before libvirt-guests was enabled
+# Leave that to each VM's autostart flag (virsh autostart)
 ON_BOOT=ignore
 # the packaged default is "suspend" (managed save to /var/lib/libvirt/qemu/save): shut the guests down (ACPI) instead
 ON_SHUTDOWN=shutdown

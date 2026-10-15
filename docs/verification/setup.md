@@ -1,6 +1,6 @@
 # qemu-kvm 導入・VM 操作の検証記録
 
-[手順書](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md) に記載していた検証結果を移動した記録。各記録の実施時点・対象版・未確認事項を保持し、この文書の移動による再検証は行っていない。
+記録の手順番号は [当時の手順書](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md) の番号。
 
 ### 対象と検証環境
 
@@ -9,18 +9,18 @@
   - **導入** (導入の手順 1〜9、再ログインしたとき、更新、ロールバックの手順 5〜7): 物理 AlmaLinux 10.2 + GNOME (Wayland、SELinux Enforcing、AMD x86_64) で通しの動作確認済み
     - PR #15 `ae650c0`: `up`、`running`、AVC 0、`/dev/dri` 0666、Wayland 直結、`down` → `up`、`clean`
     - PR #26 `ba2fee2`: `kvm` 再ビルド、両コンテナ `running`、VM のライフサイクル一式
-    - `0cab212`: 導入の手順 6・7 → 導入の手順 8 → 導入の手順 9 →「表示先が変わったとき」(現「再ログインしたとき」) の `up gui` → 付録の確認行 (`auth_unix_rw` / `getent shadow` / `/dev/dri` / `ausearch`) → `KVM_HOST=headless` での `up gui` / `viewer` の拒否 (exit 1 / 2) → `down` (`virbr0` と `/run/kvm-container` が残らない) → `clean`。clone 先は `~/kvm-container` 以外 (git の worktree)、`viewer` と VM は未実施
+    - `0cab212`: 導入の手順 6・7 → 導入の手順 8 → 導入の手順 9 →「再ログインしたとき」 の `up gui` → 付録の確認行 (`auth_unix_rw` / `getent shadow` / `/dev/dri` / `ausearch`) → `KVM_HOST=headless` での `up gui` / `viewer` の拒否 (exit 1 / 2) → `down` (`virbr0` と `/run/kvm-container` が残らない) → `clean`。clone 先は `~/kvm-container` 以外 (git の worktree)、`viewer` と VM は未実施
   - **ディスプレイの無いホストは PR #28 で通した**
     - AlmaLinux 10.2 / Raspberry Pi 5 / aarch64、SELinux Enforcing、グラフィカルセッション外のシェル
     - `build` → `KVM_HOST=headless` での `up` → 付録の確認一式 → `down` → `clean`
     - **ただしそのホストでは VM を作っていない** (`virt-install` / `virsh console` は未実施)
-  - README の例を変数形に書き換えたもので、その形では再実行していない行 (導入):
+  - 変数形では本実行していない行 (導入):
     - 導入の手順 6 の `cd "${REPO:?…}" && ./kvm.sh build kvm`、再ログインの手順 1 の `cd "${REPO:?…}" && ./kvm.sh up gui`、付録の `./kvm.sh viewer "${VM_NAME:?…}"`
   - 新しく足した行で、本実行していないもの (導入):
     - 導入の手順 2 の `sudo dnf install` (導入の手順 3 の `rpm -q podman git` は実行した)、導入の手順 4 の `git clone` (既に clone 済みのホストなので判定で飛ばした)
     - 「更新」の各手順、ロールバックの手順 7 の `rmi --ignore` とリポジトリの削除
   - **VM** (VM 作成の手順 1〜6、VM 利用の手順 2・4・5、VM を削除する): 物理 AlmaLinux 10.2 + GNOME、SELinux Enforcing で、作成 → 起動 → `viewer` → `reboot` → `shutdown` → `suspend` / `resume` → `destroy` → 稼働中の `down kvm` → `autostart` → `undefine --nvram --storage vda` の一式を通した (PR #26。[付録](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-のライフサイクルを確認する))
-    - **ただしそのときの作成は `--location` + キックスタート形で、`--network` も省いていた。** VM 作成の手順 3 の `--cdrom` 形は README の例を変数形に書き換え、`--network "network=${VM_NETWORK}"` を足したもので、その形では再実行していない
+    - **ただしそのときの作成は `--location` + キックスタート形で、`--network` も省いていた。** VM 作成の手順 3 の `--cdrom` 形と `--network "network=${VM_NETWORK}"` を付けた形では再実行していない
     - **記録の VM はディスクが virtio で、NIC は `--network` を省いた virt-install の既定だった**。記録のディスクは `vda`
     - VM 作成の手順 3 の `--machine q35`・`bus=sata,target.rotation_rate=1`・`model=e1000e` は、物理ホストでは本実行していない
     - それに合わせて `sda` / `sdb` に付け替えた行 (VM 作成の手順 5、[VM を削除する](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を削除する)の手順 1・2・5、補足) も本実行していない
@@ -28,27 +28,25 @@
     - KVM の無いコンテナなので `--virt-type qemu` を足し、ISO は空のファイルにした。OS を `--osinfo almalinux10` で渡した形と、検出できない形の両方で同じ名前になった。VM は起動していない
     - そのコンテナでは、ディスク `sda` (`bus='sata' rotation_rate='1'`)・CD-ROM `sdb`・NIC `e1000e` になり、VM 作成の手順 5 の `grep` / `domblklist` / `domiflist` もそのとおりに出た
     - 同じコンテナで、virtio の VM に `undefine --storage sda` を付けると CD-ROM に入ったままの ISO が消え、SATA の VM では `sda` の qcow2 だけが消えることも確かめた
-    - VM 作成の手順 1・2・4〜6、VM 利用の手順 2・4・5 と「VM を削除する」の各行も README の例を変数形に書き換えたもので、その形では再実行していない
+    - VM 作成の手順 1・2・4〜6、VM 利用の手順 2・4・5 と「VM を削除する」の各行も変数形では再実行していない
     - 新しく足した行で、本実行していないもの: 導入の手順 1 の `VM_NETWORK`、VM 作成の手順 5 の `sudo ls -l`・`dumpxml` の `grep`・`domiflist`、VM 利用の手順 2・5 の `domstate`、[VM を削除する](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を削除する)の手順 2〜4 (`change-media --eject --config`・`shutdown`・`domstate`) と手順 6 (ISO の `sudo rm`) (`--remove-all-storage` が ISO を消すことは `lctest` で確認した)
     - ディスプレイの無いホストでの VM の作成・操作 (`virt-install` / `virsh console`) は未検証。そこで確認したのは `up` 〜 `down` だけ
     - PR #28 のディスプレイ無しのホストは aarch64 で、VM 作成の手順 3 の SATA と e1000e はその qemu-kvm に無い ([VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) の補足)
   - **ブリッジの節**: **通しで実行していない。** `KVM_BRIDGE` の機構 (`bridged` の登録・削除と、`bridged` につないだ VM の疎通) を現行構成で確認した記録は無い
     - 記述は `kvm.sh` の実装 (`check_host_network` / `sync_bridged_network`。[SPEC.md 2.4](../SPEC.md#24-起動前に確認されるホスト資源-check_host_networkkvm-の起動時) / [5.6](../SPEC.md#56-ブリッジ同期-sync_bridged_network)) から書いたもの
     - **ブリッジの節の手順 3・4 の nmcli も物理ホストで本実行していない** (物理 AlmaLinux 10.2 + GNOME での通しの確認 PR #15 `ae650c0` は NIC が無線のみで `KVM_BRIDGE` を試していない)
-    - README の例を変数形に書き換えたもので、その形では再実行していない行: ブリッジの節の手順 1 の `NIC_CON` の式 (`awk -F: -v d="${NIC}" '$2==d{print $1}'`)、同じ節の手順 3・4 の nmcli 行と手順 7 の `KVM_BRIDGE="${BRIDGE}" ./kvm.sh up`
-    - 新規の確認行で本実行していないもの: ブリッジの節の手順 1 の読み戻し、同じ節の手順 2 と手順 5 の `ip -br addr show`、手順 5 の `ls -d`、手順 6 の `./kvm.sh down kvm`、手順 8 の `net-dumpxml`、手順 9 の `domiflist`、ロールバックの手順 1〜4 (ブリッジの節の手順 8 の `net-list` は README にあった行)
+    - 変数形では再実行していない行: ブリッジの節の手順 1 の `NIC_CON` の式 (`awk -F: -v d="${NIC}" '$2==d{print $1}'`)、同じ節の手順 3・4 の nmcli 行と手順 7 の `KVM_BRIDGE="${BRIDGE}" ./kvm.sh up`
+    - 新規の確認行で本実行していないもの: ブリッジの節の手順 1 の読み戻し、同じ節の手順 2 と手順 5 の `ip -br addr show`、手順 5 の `ls -d`、手順 6 の `./kvm.sh down kvm`、手順 8 の `net-dumpxml`、手順 9 の `domiflist`、ロールバックの手順 1〜4
     - ブリッジの節の手順 3 とロールバックの手順 4 の nmcli は、`sudo` がパスワードを聞かない前提に合わせて 1 ブロック 2 行の形にした (この形でも本実行していない)
-  - **4 本の手順書を 1 本にまとめたときに変えた行** (どれも本実行していない):
-    - 導入の手順 1 の 2 つのブロック (旧 setup.md と旧 vm.md の手順 1 を 1 つにした形)。旧 vm.md の `cd "${REPO:?…}" && ls -l "${ISO:?…}"` は消し、`ls -l` を VM 作成の手順 1 の先頭に移した
-    - ブリッジの節の手順 1 (旧 bridge.md の `REPO=` と `cd "${REPO:?…}" && ls -l kvm.sh` を消し、`ip -br addr show` を同じ節の手順 2 に移した)
-    - 中断メッセージ (`${VAR:?…}`) の手順の番号だけを直した行: ブリッジの節の手順 2〜4・7・9、ロールバックの手順 4、付録の `./kvm.sh viewer`
-    - `kvm.sh` のヘッダとメッセージの参照先 (`docs/bridge.md` → `docs/setup.md`)。`bash -n` と `shellcheck` だけで確かめた
-  - **実施手順をシナリオに分けたときに変えた行** (どれも本実行していない):
-    - 旧手順 1〜9 は導入、旧手順 10〜14 は VM 作成の手順 1〜5、旧手順 15・16 は VM 利用の手順 2・4 にした
-    - 旧手順 17 は分け、`autostart` を VM 作成の手順 6、`domstate` を VM 利用の手順 5 に移した。旧「表示先が変わったとき」は再ログインの手順 1・2 にした
-    - 新しく足した行: VM 利用の手順 1 の `cd "${REPO:?…}" && ./kvm.sh up`、手順 3 の `./kvm.sh viewer "${VM_NAME:?…}"`、手順 6 の `./kvm.sh down`
-    - 変えた行: VM 利用の手順 2 の `start` に `${VM_NAME:?…}` を足した。中断メッセージ (`${VAR:?…}`) の「手順 1」は「導入の手順 1」にした
-    - 更新の手順 3 (旧版のランチャーを消す `rm -f`) は新しく足した
+  - **本実行していない行と静的検査の範囲**:
+    - 導入の手順 1 の 2 つのブロックと、VM 作成の手順 1 の `ls -l` は本実行していない
+    - ブリッジの節の手順 1 と手順 2 の `ip -br addr show` は本実行していない
+    - 中断メッセージ (`${VAR:?…}`) を含む行で本実行していないもの: ブリッジの節の手順 2〜4・7・9、ロールバックの手順 4、付録の `./kvm.sh viewer`
+    - `kvm.sh` のヘッダとメッセージの参照先は、`bash -n` と `shellcheck` だけで確かめた
+  - **VM 利用と更新の未実施範囲**:
+    - 本実行していない行: VM 利用の手順 1 の `cd "${REPO:?…}" && ./kvm.sh up`、手順 3 の `./kvm.sh viewer "${VM_NAME:?…}"`、手順 6 の `./kvm.sh down`
+    - VM 利用の手順 2 の `start` の `${VM_NAME:?…}` と、「導入の手順 1」を指す中断メッセージ (`${VAR:?…}`) は本実行していない
+    - 更新の手順 3 (旧版のランチャーを消す `rm -f`) は本実行していない
   - **アクティビティからの起動・`KVM_SOFTWARE_GL`・`KVM_CLEAN_YES`・音声ソケットの受け渡しを削除した変更** (本実行していない):
     - `kvm.sh` / `container/gui/gui` は `bash -n` と `shellcheck` で確かめた
     - `gui_args` だけを取り出し、runtime dir の中と外の Wayland ソケットで `GUI_ARGS` を確かめた (podman は動かしていない)
@@ -65,7 +63,7 @@
 | ブリッジの節 (`KVM_BRIDGE`) | 未検証 (NIC が無線のみ) | 未検証 |
 
 
-## 手順本文にあった検証記録
+## 手順の検証範囲
 
 ### 導入する (1 度だけ) — 手順 1: 変数について
 
@@ -76,7 +74,7 @@
 - `ISO` はホスト側のパス。`ISO=~/Downloads/...` のように `~` で始めれば代入時に展開される (引用符で囲むと展開されない)。[VM 作成の手順 1](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) でコピーし、VM 作成の手順 3 では `basename` だけをコンテナ内のパスに付ける
 - `ISO` は絶対パス (`~` 始まりを含む) で入れる。相対パスで入れると、この手順の最後の行やこの節の手順 4 の `cd` の後で見つからなくなる
 - `VM_NAME` は libvirt のドメイン名で、ディスク `/var/lib/libvirt/images/<VM名>.qcow2`、定義 `data/etc-libvirt/qemu/<VM名>.xml`、UEFI 変数 `data/var-libvirt/qemu/nvram/<VM名>_VARS.fd` の名前になる。削除 (`undefine`) もこの名前で行う
-- `VM_MEMORY` は MiB、`VM_DISK` は GiB (`virt-install` の単位)。既定値は旧 README の例 (`alma10` / 4096 / 2 / 20)
+- `VM_MEMORY` は MiB、`VM_DISK` は GiB (`virt-install` の単位)
 - ディスクのバス (SATA の SSD) と NIC のモデル (e1000e) は変数にしていない。VM 作成の手順 3 のコマンドに直接書いてある
 - `VM_NETWORK` は VM 作成の手順 3 の `--network network=` に渡す libvirt ネットワークの名前。`default` は NAT (`virbr0`、192.168.122.0/24)、`bridged` は[ブリッジの節](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-をホストのブリッジにつなぐ-任意)で `KVM_BRIDGE` を付けて登録したホストのブリッジ
 - 変数はそのシェルの中だけで有効。以降の手順は、リポジトリ直下 (この節の手順 4 か、貼り直したこの手順の最後の行で移る) で貼る
@@ -129,7 +127,7 @@
 - `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。本書は導入の手順 1 の `VM_NETWORK` で明示し、ホストによってつなぎ先が変わらないようにした。ネットワークの仕様は [SPEC.md 4.5 節](../SPEC.md#45-ネットワークとポート)
 - `default` につないだ VM がネットワークに出られること (インストーラがリポジトリに届き、起動後に `domifaddr --source agent` で IP が取れること) は PR #26 のライフサイクル確認で見ている ([付録](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-のライフサイクルを確認する))。そのときは `--network` を省いた形で、そのホストでは `default` につながった
 - `virt-install --initrd-inject` は `kvm` イメージに `cpio` が無いので使えない。キックスタートは `OEMDRV` ラベルの ISO にして渡す ([付録](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-のライフサイクルを確認する)、[SPEC.md 8 章](../SPEC.md#8-既知の制限事項))
-- `--cdrom` の VM は、インストーラの再起動で一度 `shut off` になり、以後はディスクから起動する。インストール後の CD-ROM は空 (`domblklist` の `sdb` が `-`) になる (旧 README の記述と virt-install の仕様による。実測は `--location` + キックスタート形で、`--cdrom` 形は再実行していない)
+- `--cdrom` の VM は、インストーラの再起動で一度 `shut off` になり、以後はディスクから起動する。インストール後の CD-ROM は空 (`domblklist` の `sdb` が `-`) になる (virt-install の仕様による。実測は `--location` + キックスタート形で、`--cdrom` 形は再実行していない)
 - Windows と検出した ISO だけは、virt-install が CD-ROM に入れたままにする (インストールが何段階かに分かれるため。`--osinfo win11` の `--print-xml` で確認)。`domblklist` の `sdb` に ISO が残る
 
 ### VM を作る (VM ごとに 1 度) — 手順 4: viewer
@@ -146,77 +144,77 @@
 - `down` の `podman rm -t` は 180 秒 (`kvm.sh` の `KVM_STOP_TIMEOUT`) で、VM の待ちは 120 秒。120 秒たっても止まらない VM (OS が無い、ACPI を無視するなど) は scope の停止で電源を切られる。ACPI に応じない VM では `down` が 122 秒で終わることを確認している ([SPEC.md 5.2 節](../SPEC.md#52-停止シーケンス-kvmsh-down))
 - `ON_BOOT=ignore` なので、`down` の時点で動いていた VM は次の `up` で起動しない。起動するのは `virsh autostart` を設定した VM だけ (`data/etc-libvirt/qemu/autostart/` の symlink)
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 1: 変数について
+### VM をホストのブリッジにつなぐ — 手順 1: 変数について
 
 - `REPO` と `VM_NAME` は[導入の手順 1](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#導入する-1-度だけ) の変数を使う (この節では設定しない)
-- `NIC_CON` (接続名) と `NIC` (デバイス名) は別物で、同じとは限らない (`Wired connection 1` のような名前のことがある)。`nmcli connection down` は接続名を取るので、`nmcli -g NAME,DEVICE connection show --active` の出力からデバイス名で引いている。README にあった `awk -F: '$2=="enp1s0"{print $1}'` を `-v d="${NIC}"` で変数化した形で、その形では再実行していない
+- `NIC_CON` (接続名) と `NIC` (デバイス名) は別物で、同じとは限らない (`Wired connection 1` のような名前のことがある)。`nmcli connection down` は接続名を取るので、`nmcli -g NAME,DEVICE connection show --active` の出力からデバイス名で引いている。`-v d="${NIC}"` の変数形では再実行していない
 - `NIC_CON` はこの手順を貼った時点の値を保持する。この節の手順 4 で NIC の接続を切り替えたあとにシェルを開き直してこの手順を貼ると、NIC に付いている接続は `bridge-slave-<NIC>` なので `NIC_CON` はその名前になる。ロールバックで元の接続名が要るので、この手順の読み戻しの出力を控えておく
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 8: 動作確認
+### VM をホストのブリッジにつなぐ — 手順 8: 動作確認
 
 - `net-list` で `bridged` が active なこと。`KVM_BRIDGE` 周りを変えたときの確認点は [SPEC.md 9.4](../SPEC.md#94-その他の確認点-変更内容に応じて) (`KVM_BRIDGE` 無しで `up` すると消えることも含む)
 - `net-dumpxml bridged` は `kvm.sh` が define した XML (`<name>bridged</name>`、`<forward mode="bridge"/>`、`<bridge name="<ブリッジ名>"/>`) を返す想定。新規の確認行で本実行していないので、出力にはこれに libvirt が足す `<uuid>` などが加わる
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 9: VM の接続
+### VM をホストのブリッジにつなぐ — 手順 9: VM の接続
 
 - `--network` を省くと、virt-install はホストの既定経路がブリッジ (`bridge0` など) 上にあればそのブリッジに、無ければ `default` (NAT、192.168.122.0/24) につなぐ (`kvm` はホストのネットワーク名前空間を共有するので、ホストのブリッジが見える)。この節の手順 4 のあとはホストの既定経路がブリッジ上にあるので、`--network` を省いた VM もそのブリッジに直接つながり得る (この経路は `bridged` を経由しない)。[VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) は `VM_NETWORK` で `--network` を明示する ([SPEC.md 8 章](../SPEC.md#8-既知の制限事項))
 - `bridged` の VM は tap がブリッジのポートになり、VM 自身の MAC で LAN に出る。仮想スイッチが MAC アドレスの詐称を許さない環境では、この形は通信できない
 - 既存の VM の付け替えは、`kvm` イメージにエディタが無いので `virsh edit` がそのままでは使えない。`virsh dumpxml` → 編集 → `virsh define` の手順も未検証
 - `domiflist` の確認は新規の行で、本実行していない
 
-### VM を作る (VM ごとに 1 度) — 手順 4 の記載
+### VM を作る (VM ごとに 1 度) — 手順 4: インストール終了時の実測
 
 - インストーラが最後に再起動すると VM は `shut off` になり、ウィンドウも閉じる (`--location` + キックスタートでの実測。`--cdrom` 形では再実行していない)
 
-### VM を作る (VM ごとに 1 度) — 手順 4 の記載 (2)
+### VM を作る (VM ごとに 1 度) — 手順 4: 画面の無いホストの未確認事項
 
 - **注意**: ディスプレイの無いホストでは `!! no display found ...` で終わる (終了コード 2)。ゲストにはシリアルコンソールかネットワーク経由でアクセスする (この手順の補足。未検証)
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 0 の記載
+### VM をホストのブリッジにつなぐ — 手順 0: nmcli の未実施範囲
 
 - この節の手順 3・4 の nmcli は物理ホストで本実行していない (検証に使った物理ホストは NIC が無線のみ)
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 5 の記載
+### VM をホストのブリッジにつなぐ — 手順 5: IP アドレスの確認行
 
 ip -br addr show "${BRIDGE}"                  # UP で、LAN の DHCP から IP が付く (NIC と同じ IP になるかは未確認)
 
-### VM をホストのブリッジにつなぐ (任意) — 手順 5 の記載 (2)
+### VM をホストのブリッジにつなぐ — 手順 5: IP アドレスの未確認事項
 
 - `ip -br addr show` でブリッジが `UP` で、LAN の DHCP から IP が付く (NIC と同じ IP になるかは未確認)
 
-### VM を削除する — 手順 2 の記載
+### VM を削除する — 手順 2: 未実施範囲
 
 - 本実行していない
 
-### VM を削除する — 手順 6 の記載
+### VM を削除する — 手順 6: 未実施範囲
 
 - 本実行していない
 
-### 更新 — 手順 0 の記載
+### 更新 — 手順 0: 未実施範囲
 
-- この節の手順は、この形では本実行していない (以前は `git pull` → `./kvm.sh down` → `./kvm.sh build` → `./kvm.sh up` と書いていたが、その流れも本実行していない)
+- この節の手順は、この形では本実行していない
 
-### 更新 — 手順 3 の記載
+### 更新 — 手順 3: 未実施範囲
 
 - 本実行していない
 
-### ロールバック — 手順 0 の記載
+### ロールバック — 手順 0: 未実施範囲
 
 - この節の手順 1〜4 と手順 7 は本実行していない
 
-### ロールバック — 手順 0 の記載 (2)
+### ロールバック — 手順 0: bridged の未確認事項
 
 - `bridged` の VM が残ったまま `KVM_BRIDGE` 無しで `up` したときの挙動は未確認 ([付録](#付録-ブリッジの節-実行記録なし))
 
-### ロールバック — 手順 7 の記載
+### ロールバック — 手順 7: 未実施範囲
 
 - 本実行していない
 
-### ロールバック — 手順 7 の記載 (2)
+### ロールバック — 手順 7: リポジトリ削除の未実施範囲
 
 - clone したリポジトリも要らなければ、`clean` の後に `cd ~ && rm -rf "${REPO}"` で消す (本実行していない)
 
-## 補足にあった検証記録
+## 表示・ブリッジ・ストレージの検証範囲
 
 - **画面は端末から開く**: アクティビティ (アプリ一覧) からの起動は廃止した。端末の無い `sudo -n` を前提にしたうえ、現行のエントリを本実行できていなかったため
 想定 (物理ホストでは本実行していない):
@@ -229,7 +227,7 @@ ip -br addr show "${BRIDGE}"                  # UP で、LAN の DHCP から IP 
 
 ### 付録: 物理 AlmaLinux 10 + GNOME での確認手順
 
-変更後の回帰確認。**先に [VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) で VM を 1 つ作り、導入の手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](../SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #15 `ae650c0` (1 コンテナ構成) と PR #26 `ba2fee2` (現行)。以下のブロックは README にあった確認手順を記録どおりに分けたもので、`cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
+変更後の回帰確認。**先に [VM 作成の手順 3](https://github.com/ryo-aoki-pc/kvm-container/blob/b0ecaa3a2fd43c1277bfcc44f08a631739ae9196/docs/setup.md#vm-を作る-vm-ごとに-1-度) で VM を 1 つ作り、導入の手順 1 の `VM_NAME` を設定したシェルで貼る。** 期待結果と検証している項目の表は [SPEC.md 9.2](../SPEC.md#92-物理-almalinux-10--gnome)。記録は PR #15 `ae650c0` (1 コンテナ構成) と PR #26 `ba2fee2` (現行)。以下のブロックの `cd "${REPO:?…}"` の行と `viewer` の変数形は本実行していない。
 
 ```bash
 cd "${REPO:?導入の手順 1 の REPO が空のまま。値を入れて貼り直す}"
@@ -311,7 +309,7 @@ sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<n
 - aarch64 のホストで、VM 作成の手順 3 が SATA / e1000e のところで止まること (qemu-kvm のビルド設定からの想定)
 - x86_64 のディスプレイ無しホストでの通し (PR #28 の記録は aarch64 の Raspberry Pi 5。`/dev/kvm` が無いときの `modprobe kvm_amd` / `kvm_intel` は x86 前提で、aarch64 では通らない)
 - ロールバックの手順 7 の `sudo podman rmi --ignore …` とリポジトリの削除、更新の手順 3 (旧版のランチャーの削除) と `git pull --ff-only` からの通常更新
-- 導入の手順 2 の `sudo dnf install`、導入の手順 4 の `git clone` (他の新規の行と「表示先が変わったとき」(現「再ログインしたとき」) の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
+- 導入の手順 2 の `sudo dnf install`、導入の手順 4 の `git clone` (他の新規の行と「再ログインしたとき」 の `./kvm.sh up gui` → `./kvm.sh virsh list` は `0cab212` で実行した)
 - `~/kvm-container` に clone したホストでの通し (`0cab212` の実行は git の worktree を clone 先にしたもの)
 
 ### 付録: VM のライフサイクルの確認手順
@@ -377,8 +375,8 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 - スパースのディスクに付く `discard='unmap'` で、ゲストの TRIM がホストの qcow2 に届くこと
 - 「VM を削除する」の手順 2〜4 (`change-media --eject --config`、`shutdown`、`domstate`) と手順 6 (ISO の `sudo rm`)
 - ディスプレイ無しのホストでの `./kvm.sh virsh console` (ISO のインストーラがシリアルに出るかも含む)
-- 導入の手順 1 (旧 setup.md と旧 vm.md の手順 1 をまとめた形) と VM 作成の手順 1 の `ls -l`、VM 作成の手順 5・6 と VM 利用の手順 2・4・5 の変数形の行と、`sudo ls -l` / `domstate` の新規行
-- VM 利用の手順 1・3・6 (実施手順をシナリオに分けたときに足した行)
+- 導入の手順 1 と VM 作成の手順 1 の `ls -l`、VM 作成の手順 5・6 と VM 利用の手順 2・4・5 の変数形の行と、`sudo ls -l` / `domstate` の新規行
+- VM 利用の手順 1・3・6
 - 「完了時点の状態」の出力例 (表示形式から組み立てたもので、そのまま取った実測ではない)
 
 ### 付録: ブリッジの節 (実行記録なし)
@@ -393,7 +391,7 @@ PR #26 の記録: キックスタートで入れた VM で上の一式を通し�
 - 物理ホストのブリッジに `--network network=bridged` (導入の手順 1 の `VM_NETWORK=bridged`) でつないだ VM が LAN の DHCP から IP を取ること、ブリッジの節の手順 9 の `domiflist` の出力
 - `KVM_BRIDGE` を付けた `up` で `bridged` が登録されること、`KVM_BRIDGE` 無しの `up` で削除されること (実行記録なし)
 - `bridged` につないだ VM が定義されたまま `KVM_BRIDGE` 無しで `up` したときの挙動 (`bridged` の削除が失敗するか、VM の起動が失敗するか)
-- ロールバックの手順 4 の nmcli (`connection delete` と元の接続の `up`。1 ブロック 2 行の形) と、ロールバックの手順 2 の `KVM_BRIDGE` 無しの `up` で `bridged` が消えるところ (README には書かれていたが本書の形では再実行していない)
+- ロールバックの手順 4 の nmcli (`connection delete` と元の接続の `up`。1 ブロック 2 行の形) と、ロールバックの手順 2 の `KVM_BRIDGE` 無しの `up` で `bridged` が消えるところ (本書の形では再実行していない)
 - 更新の手順 2 を `KVM_BRIDGE=` 付きの `up` にしたとき、`bridged` が残ること
 - `export KVM_BRIDGE=br0` にしたときの `viewer` / `up` の挙動
 

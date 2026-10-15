@@ -26,4 +26,3 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 - [注意点](docs/extra/setup.md#注意点)
 - [検証記録](docs/verification/setup.md)
 - 変更するとき: [変更後の確認](docs/dev/check.md)と [AGENTS.md](AGENTS.md)
-- 旧手順書の移動先: setup-notes の[集約対応表](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/dev/consolidation-map.md)
