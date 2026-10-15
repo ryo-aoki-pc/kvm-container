@@ -6,7 +6,7 @@
 
 ## 導入手順の正本
 
-導入・利用・更新の手順は、setup-notes の [virtual-machines.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) の「kvm-container」とその子の項にある (AlmaLinux 10 だけ。2026-10-15 に almalinux-setup.md から移った)。このリポジトリには置かない。Windows 11 の手順は無い。
+導入・利用・更新の手順は、setup-notes の [virtual-machines.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) の「kvm-container」とその子の項を正本にする (AlmaLinux 10 だけ)。このリポジトリには置かない。Windows 11 の手順は無い。
 
 ## このリポジトリについて
 
@@ -73,7 +73,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 - **ホストの `XDG_RUNTIME_DIR` は読み取り専用で `/run/host-xdg-runtime` にマウントし、`/run/user/<uid>` には絶対にマウントしない。**
   マウントするとコンテナの logind がそのディレクトリを自分のものとして扱い、`user-runtime-dir@.service` の停止処理で
-  ホストの Wayland ソケットや session bus ごと削除してしまう (cockpit を載せていた頃に、そのログアウトで実際に起きた)。
+  ホストの Wayland ソケットや session bus ごと削除してしまう (このログアウトで実際に起きた)。
   ソケットは `map_rt_path` で「コンテナ内から見た絶対パス」に変換して環境変数で渡す (unix ソケットは ro マウントでも connect できる)。
   runtime dir の外を指すシンボリックリンクは、そのソケットファイルだけを同じパスに ro マウントする。
 - **コンテナ内の `/run/user/<uid>` は logind が作る tmpfs**。`gui-user-setup` が GUI ユーザーを linger 登録するので
@@ -113,9 +113,9 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 ## 慣習
 
-- **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
+- **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語**。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
-- 挙動を変えたら、setup-notes の正本の手順・README の「導入」の表・参照情報 (`docs/reference/setup.md`)・変更後の確認 (`docs/dev/check.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。検証記録 (`docs/verification/setup.md`) の既存本文は保持し、新しい検証結果を追記する。
+- 挙動を変えたら、setup-notes の正本の手順・README の「導入」の表・参照情報 (`docs/reference/setup.md`)・変更後の確認 (`docs/dev/check.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。新しい検証結果は検証記録 (`docs/verification/setup.md`) に追記する。
 - 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
   `docs/reference/setup.md`「環境変数」の表の 3 箇所に反映する。
 
@@ -124,8 +124,8 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 - 導入・利用・更新の手順は正本に置き、README の「導入」の表から正本の項へ直接リンクする (手順書の先頭やカテゴリの見出しへはリンクしない)。執筆規則は setup-notes の `docs/dev/writing-rules.md`
 - `docs/extra/setup.md` はロールバックと注意点、`docs/reference/setup.md` は正本の各手順の背景と選定理由、`docs/verification/setup.md` は検証記録 (環境・日付・対象コミット・実出力・未確認事項)、`docs/SPEC.md` は実装の仕様、`docs/dev/check.md` は変更後の確認の手順
 - 参考資料の見出しは `### <項> / 手順 N: 補足: <題>` にし、手順番号は正本の項の番号にする。正本の手順番号が変わったら付け替える
-- 案内だけになった文書・節は消し、旧パスと移動先を setup-notes の集約対応表に足す。消すときは参照元のリンクを付け替える (検証記録は、削除前の固定コミットの URL にする)
-- 検証記録の既存の本文・手順番号・出力は変えない。新しい対象版・環境・範囲は追記する
+- 文書を移す・分ける・まとめるときは、移した経緯と、旧ファイル名・旧見出しとの対応を文書に書かない (経緯は git の履歴と Pull Request の本文に残す)。リンクを今の場所へ直す。中身が新しい場所への案内だけになったファイルは消す
+- 残す検証記録の実施日・対象版・環境・出力・成功と失敗・未実施の範囲・記録したときの手順番号は書き換えない。再検証せずに検証範囲を広げない。記録の手順番号が今の手順と違い、本文を読むのに要るときだけ「記録の手順 | 今の手順」の表で結ぶ
 
 ## 共同作業の規則
 
@@ -136,14 +136,14 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 - 頼まれた範囲のファイルだけを変える。範囲の外を変えるときは、変える前に理由を書いて確かめる
 - 終わったら、テストとリンターを通してから、目的ごとにコミットする。通らなければコミットせずに、結果を報告する
 - コミットしたら、今のブランチを push し、`main` への Pull Request を作る（既にあれば足す）。今のブランチに `main` を取り込むのは、頼まれたときと、Pull Request が競合したときだけ
-- `main` への取り込み（マージ）は、エージェントが行ってよい（2026-10-15、利用者の決定）。テストとリンターが通り、Pull Request が競合していなければ、`gh pr merge --squash` で Pull Request を取り込む（手元の `main` にはコミットも push もしない）。利用者が取り込まないよう頼んだときは取り込まず、そのことを報告する。取り込んだ Pull Request のブランチは、GitHub がリモートから自動で消す（リポジトリの Automatically delete head branches は人が有効にしておき、エージェントは変えない）。取り込んだブランチには、その後コミットも push もせず、次の作業は新しいブランチで始める。手元に残ったブランチの削除は人が行う
+- `main` への取り込み（マージ）は、エージェントが行ってよい。テストとリンターが通り、Pull Request が競合していなければ、`gh pr merge --squash` で Pull Request を取り込む（手元の `main` にはコミットも push もしない）。利用者が取り込まないよう頼んだときは取り込まず、そのことを報告する。取り込んだ Pull Request のブランチは、GitHub がリモートから自動で消す（リポジトリの Automatically delete head branches は人が有効にしておき、エージェントは変えない）。取り込んだブランチには、その後コミットも push もせず、次の作業は新しいブランチで始める。手元に残ったブランチの削除は人が行う
 - 秘密情報（`.env`・鍵・トークン・パスワード）を読まない・書かない・出力しない
 - レビューを頼まれたら、ファイルを変えずに、指摘を「重大度・場所（ファイル:行）・理由・直し方」で挙げる
 - ほかの担当の変更は、`git diff main...agent/codex` のように git で読む（ほかの worktree へ移らない）
 
 ## 既定の分担
 
-利用者が Claude Code に、分担を指定せずにファイルを変える作業を頼んだときは、Claude Code が取りまとめて次の 4 つで分担する（2026-10-15、利用者の決定）。「共同作業の規則」の「分担は人が決める」で、人が分担を決めていないときの既定にする。利用者がほかのエージェントに直接頼んだときは、この節は使わず「共同作業の規則」に従う。
+利用者が Claude Code に、分担を指定せずにファイルを変える作業を頼んだときは、Claude Code が取りまとめて次の 4 つで分担する。「共同作業の規則」の「分担は人が決める」で、人が分担を決めていないときの既定にする。利用者がほかのエージェントに直接頼んだときは、この節は使わず「共同作業の規則」に従う。
 
 - Claude Code だけで行うもの: 利用者の質問への答え、ファイルを変えない調べもの、1 つのファイルの数行で振る舞いを変えない直し（誤字・リンク・値の直しなど）
 - Claude Code: 計画・実機での確かめ・ほかの 3 つへの依頼・指摘の確かめ・統合・コミットと Pull Request・取り込み

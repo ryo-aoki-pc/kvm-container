@@ -36,7 +36,7 @@ RUN microdnf -y install --setopt=install_weak_deps=0 shadow-utils \
         systemd-udevd-kernel.socket \
         systemd-udevd-control.socket \
         systemd-resolved.service \
-    # NetworkManager is not needed by these containers and is masked in case a dependency brings it in (cockpit used to):
+    # NetworkManager is not needed by these containers and is masked in case a dependency brings it in:
     # NetworkManager never reports podman's eth0 as "online", so anything wanting network-online.target waits 60 s for
     # NetworkManager-wait-online and leaves the boot "degraded" with a failed unit (gui waits for the boot before
     # launching the first app) ...
