@@ -82,7 +82,7 @@
 - `systemctl is-system-running` が両コンテナで `running` (`degraded` ではない) ことは、Containerfile の unit マスク群 (`iscsid.socket` / `NetworkManager-wait-online.service` など) が効いているかの実質的な回帰テスト
 - `/run/libvirt/virtqemud-sock` が `srw-rw---- root libvirt` なのは `virtd-socket.conf` の drop-in が効いている証拠。`kvm-gui` から一般ユーザーで `virsh` が通ることが、コンテナをまたぐ libvirt 接続の回帰テスト ([選択した方針](#選択した方針))
 - `./kvm.sh logs` は `kvm` の `kvm-libvirt-conf` / `virtqemud` / `gui-user` の journal、`./kvm.sh logs gui` は `kvm-gui` の `/var/log/gui.log` と `gui-user` の journal を出す
-- 変更後の回帰確認は[変更後の確認](../dev/check.md) ([物理 GNOME](../dev/check.md#物理-almalinux-10--gnome-で確認する) / [ディスプレイ無し](../dev/check.md#ディスプレイの無いホストで確認する) / [VM のライフサイクル](../dev/check.md#vm-のライフサイクルを確認する)) を手で流す。期待結果は [SPEC.md 9 章](../SPEC.md#9-検証手順)
+- 変更後の回帰確認は[変更後の確認](../dev/check.md) ([静的検査](../dev/check.md#静的検査) / [物理 GNOME](../dev/check.md#物理-almalinux-10--gnome-で確認する) / [ディスプレイ無し](../dev/check.md#ディスプレイの無いホストで確認する) / [VM のライフサイクル](../dev/check.md#vm-のライフサイクルを確認する)) を手で流す。期待結果は [SPEC.md 9 章](../SPEC.md#9-検証手順)
 
 ### VM を作る / 手順 1: 補足: 変数について
 

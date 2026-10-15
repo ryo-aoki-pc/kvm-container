@@ -15,9 +15,7 @@
    ```bash
    REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
    printf '\n\033[7m 確認 \033[0m\n'
-   for v in REPO; do
-     printf '%-10s = %s\n' "$v" "${!v}"
-   done
+   printf 'REPO = %s\n' "${REPO}"
    [ ! -d "${REPO}" ] || cd "${REPO}"
    ```
 
@@ -29,13 +27,12 @@
 1. シェルスクリプトの構文と shellcheck の指摘を確かめる。
 
    ```bash
-   files="kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf"
    printf '\n\033[7m 確認 \033[0m\n'
-   bash -n $files
-   shellcheck $files
+   bash -n kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf
+   shellcheck kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf
    ```
 
-   - 指摘が 0 件ならよい (`-S style` でも 0 件を保つ)
+   - 何も出なければよい (`-S style` でも指摘 0 件を保つ)
    - `shellcheck: command not found` と出たら、この節の手順 3 で確かめる
 
 1. shellcheck がホストに無いときだけ、`gui` イメージの使い捨てコンテナで実行する。
@@ -43,11 +40,11 @@
    ```bash
    printf '\n\033[7m 確認 \033[0m\n'
    sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
-     sh -c 'microdnf -y install epel-release >/dev/null && microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
+     sh -c 'microdnf -y install epel-release >/dev/null && microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf'
    ```
 
-   - 新しいシェルでは、この節の手順 1 と手順 2 の `files=` の行を貼ってから実行する
-   - 指摘が 0 件ならよい (`-S style` でも 0 件を保つ)
+   - ShellCheck は EPEL にしか無いので、この使い捨てのコンテナの中でだけ `epel-release` を入れる
+   - 期待する結果は、この節の手順 2 と同じ
 
 ## 物理 AlmaLinux 10 + GNOME で確認する
 
@@ -74,17 +71,18 @@
 1. コンテナを起動し、権限・接続・SELinux を確かめる。
 
    ```bash
-   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
-   getenforce                                            # Enforcing のままで可
-   env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
-   ./kvm.sh up                                            # >> ready. VMs: ... が出ること
-   for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done   # どちらも running (degraded ではない)
-   sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock  # srw-rw---- root libvirt
-   sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list   # 一般ユーザーが kvm-gui から kvm の libvirt に接続できること
-   sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"   # すべて "none" (kvm-libvirt-conf.service)
-   sudo podman exec kvm getent shadow $USER               # 第 2 フィールドが ! (ロック) であること
-   sudo podman exec kvm-gui ls -la /dev/dri              # renderD* が 0666
-   sudo ausearch -m avc -ts recent                        # SELinux 拒否が無いこと
+   {
+     getenforce                                            # Enforcing のままで可
+     env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
+     cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}" && ./kvm.sh up   # >> ready. VMs: ... が出ること
+     for c in kvm kvm-gui; do sudo podman exec $c systemctl is-system-running; done   # どちらも running (degraded ではない)
+     sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock  # srw-rw---- root libvirt
+     sudo podman exec kvm-gui runuser -u $USER -- virsh -c qemu:///system list   # 一般ユーザーが kvm-gui から kvm の libvirt に接続できること
+     sudo sh -c "grep -h '^auth_unix_rw' data/etc-libvirt/virt*d.conf"   # すべて "none" (kvm-libvirt-conf.service)
+     sudo podman exec kvm getent shadow $USER               # 第 2 フィールドが ! (ロック) であること
+     sudo podman exec kvm-gui ls -la /dev/dri              # renderD* が 0666
+     sudo ausearch -m avc -ts recent                        # SELinux 拒否が無いこと
+   }
    ```
 
    - 両コンテナが `running`、ソケットが `srw-rw---- root libvirt`、SELinux 拒否が無いことを確かめる
@@ -133,9 +131,7 @@
    ```bash
    REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
    printf '\n\033[7m 確認 \033[0m\n'
-   for v in REPO; do
-     printf '%-10s = %s\n' "$v" "${!v}"
-   done
+   printf 'REPO = %s\n' "${REPO}"
    [ ! -d "${REPO}" ] || cd "${REPO}"
    ```
 
@@ -147,8 +143,7 @@
 1. 画面を使わずにコンテナを起動する。
 
    ```bash
-   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
-   KVM_HOST=headless ./kvm.sh up      # >> ready. のあとに >> no display found: GUI disabled ... が出ること
+   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}" && KVM_HOST=headless ./kvm.sh up   # >> ready. のあとに >> no display found: GUI disabled ... が出ること
    ```
 
    - `>> ready.` と `>> no display found: GUI disabled ...` が出る
@@ -166,14 +161,16 @@
 1. コンテナ・権限・ネットワーク・SELinux を確かめる。
 
    ```bash
-   sudo podman exec kvm systemctl is-system-running     # running (degraded ではないこと)
-   sudo podman ps                                       # kvm だけで、kvm-gui が居ないこと
-   sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock          # srw-rw---- root libvirt
-   sudo sh -c 'grep -h "^auth_unix_rw" data/etc-libvirt/virt*d.conf'   # すべて "none"
-   sudo podman exec kvm getent shadow "$USER"           # 第 2 フィールドが ! (GUI ユーザーはロックされている)
-   ./kvm.sh virsh list --all                            # 一覧が出ること (VM が無ければヘッダだけ)
-   ip -br addr show virbr0                              # 192.168.122.1/24
-   sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<no matches>)
+   {
+     sudo podman exec kvm systemctl is-system-running     # running (degraded ではないこと)
+     sudo podman ps                                       # kvm だけで、kvm-gui が居ないこと
+     sudo podman exec kvm ls -l /run/libvirt/virtqemud-sock          # srw-rw---- root libvirt
+     sudo sh -c 'grep -h "^auth_unix_rw" data/etc-libvirt/virt*d.conf'   # すべて "none"
+     sudo podman exec kvm getent shadow "$USER"           # 第 2 フィールドが ! (GUI ユーザーはロックされている)
+     ./kvm.sh virsh list --all                            # 一覧が出ること (VM が無ければヘッダだけ)
+     ip -br addr show virbr0                              # 192.168.122.1/24
+     sudo ausearch -m avc -ts recent                      # 拒否が無いこと (<no matches>)
+   }
    ```
 
    - `kvm` だけが `running` で、SELinux 拒否が無いことを確かめる
@@ -202,9 +199,7 @@
    ```bash
    REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
    printf '\n\033[7m 確認 \033[0m\n'
-   for v in REPO; do
-     printf '%-10s = %s\n' "$v" "${!v}"
-   done
+   printf 'REPO = %s\n' "${REPO}"
    [ ! -d "${REPO}" ] || cd "${REPO}"
    ```
 
@@ -216,8 +211,7 @@
 1. キックスタート用 ISO を作り、VM のインストールと OS 起動を確かめる。
 
    ```bash
-   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
-   ./kvm.sh up
+   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}" && ./kvm.sh up
    sudo podman exec kvm mkdir -p /tmp/ksdir && sudo podman cp ks.cfg kvm:/tmp/ksdir/ks.cfg
    sudo podman exec kvm xorriso -as mkisofs -V OEMDRV -o /var/lib/libvirt/images/lctest-ks.iso /tmp/ksdir
    ./kvm.sh virt-install --name lctest --memory 3072 --vcpus 2 --disk size=10 \

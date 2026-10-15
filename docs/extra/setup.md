@@ -16,6 +16,9 @@ setup-notes の[仮想マシンのセットアップの「kvm-container」](http
 
    ```bash
    NIC=       # ← ブリッジに収容した物理 NIC (ブリッジを戻すときだけ)。<NIC>
+   ```
+
+   ```bash
    NIC_CON=   # ← 控えた NIC の元の接続名 (ブリッジを戻すときだけ)。<NIC_CON>
    ```
 
@@ -31,10 +34,10 @@ setup-notes の[仮想マシンのセットアップの「kvm-container」](http
 
    - `REPO` は、[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 と同じ値を入れる
    - `BRIDGE`・`NIC` は、[kvm-container の VM をホストのブリッジにつなぐ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ)の手順 1 と同じ値を入れる。`NIC`・`NIC_CON` は、ブリッジの項を通していなければ空のままでよい
-   - `NIC_CON` には、同じ項の手順 1 で控えた元の接続名を手で入れる。同じ項の手順 1 を貼り直して取らない (同じ項の手順 4 の後は `bridge-slave-…` の名前になる)
+   - `NIC_CON` には、ブリッジの項の手順 1 で控えた元の接続名を手で入れ、同じ項の手順 1 を貼り直して取らない (同じ項の手順 4 の後は `bridge-slave-…` の名前になる)
    - 値を読み戻して確かめる
    - 最後の行でリポジトリ直下に移る
-   - 新しいシェルを開いたら、この手順の 2 つのブロックを貼り直してから先へ進む
+   - 新しいシェルを開いたら、この手順の 3 つのブロックを貼り直してから先へ進む
 
 1. ブリッジの項を通したときだけ、`bridged` を外すため、まず `kvm` を止める。
 
@@ -65,11 +68,14 @@ setup-notes の[仮想マシンのセットアップの「kvm-container」](http
 1. ブリッジの項を通したときだけ、コンソールから単独で、ブリッジを消して NIC の元の接続を上げる。
 
    ```bash
-   sudo nmcli connection delete "${BRIDGE:?この節の手順 1 の BRIDGE が空のまま。この節の手順 1 を貼り直す}" "bridge-slave-${NIC:?この節の手順 1 の NIC が空のまま。この節の手順 1 を貼り直す}"
-   sudo nmcli connection up "${NIC_CON:?この節の手順 1 の NIC_CON が空のまま。この節の手順 1 を貼り直す}"
+   if [ -z "${BRIDGE}" ] || [ -z "${NIC}" ] || [ -z "${NIC_CON}" ]; then echo '中断: この節の手順 1 の BRIDGE・NIC・NIC_CON のどれかが空のまま。この節の手順 1 で値を入れて貼り直す' >&2
+   else
+     sudo nmcli connection delete "${BRIDGE}" "bridge-slave-${NIC}"
+     sudo nmcli connection up "${NIC_CON}"
+   fi
    ```
 
-   - ブリッジを消してから NIC に IP が戻るまでは通信できないので、2 行を続けて実行する
+   - ブリッジを消してから NIC に IP が戻るまでは通信できないので、2 つのコマンドを 1 つのブロックで続けて実行する。変数のどれかが空なら、何も消さずに止まる
    - `ip -br addr show "${NIC}"` で、NIC に LAN の IP が戻っていることを確かめる
 
 1. コンテナを止めて消す。
