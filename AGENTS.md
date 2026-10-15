@@ -6,12 +6,7 @@
 
 ## 導入手順の正本
 
-Windows 11・AlmaLinux 10 の導入・利用・更新・任意操作は、setup-notes の [windows-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/windows-setup.md) と [almalinux-setup.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/almalinux-setup.md) を正本として集約する。既存の手順も対象とする。kvm-container の項は、2026-10-15 に almalinux-setup.md から setup-notes の [virtual-machines.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) へ移った（仮想マシンの正本）。
-
-- 固有の仕様・他 OS の手順・開発者検査・理由・注意・検証記録・ロールバックが残る文書は保持する
-- 案内だけになった旧文書は削除する。README から上の正本（kvm-container の項は virtual-machines.md）と[集約対応表](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/dev/consolidation-map.md)へ案内する
-
-文書規則は、Windows・AlmaLinux の実行手順には上の正本へ適用する。操作や移動先を変えたら正本・README・集約対応表・参照情報を同期し、過去の検証本文は保持する。共通 bash 設定が読むツールの初期化を `~/.bashrc` に直接追記しない。
+導入・利用・更新の手順は、setup-notes の [virtual-machines.md](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) の「kvm-container」とその子の項にある (AlmaLinux 10 だけ。2026-10-15 に almalinux-setup.md から移った)。このリポジトリには置かない。Windows 11 の手順は無い。
 
 ## このリポジトリについて
 
@@ -37,7 +32,7 @@ KVM_HOST=headless ./kvm.sh up      # 画面があっても GUI コンテナを�
 KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネットワーク "bridged" として登録
 ```
 
-検証は自動化されていない。変更後は `docs/setup.md` の「変更後に確認する」の手順 (物理 AlmaLinux 10 GNOME / ディスプレイ無し / VM のライフサイクル) を
+検証は自動化されていない。変更後は `docs/dev/check.md` の手順 (静的検査 / 物理 AlmaLinux 10 GNOME / ディスプレイ無し / VM のライフサイクル) を
 手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者の確認は正本の「kvm-container を導入する」の最終手順。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
@@ -45,31 +40,13 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 シェルスクリプトを触ったら最低限 `bash -n` と `shellcheck` を
 `kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf`
-にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/SPEC.md` 9.1 節)。
+にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/dev/check.md` の「静的検査」)。
 
 ## 構造
 
 3 層に分かれており、どの層を触るかで影響範囲が変わる。現状実装の仕様書 (図付き) は `docs/SPEC.md`。
 
-ドキュメントの構成:
-
-- `README.md` から正本と集約対応表へ案内する。`docs/setup.md` は正本への案内と開発者検査、ロールバックは `docs/extra/setup.md` に残す。
-- 手順書には操作、必要な前提・分岐・待機条件・注意・期待する結果を残す。過去の環境・実施日・対象コミット・実出力・結果・失敗・未確認事項は `docs/verification/setup.md` に記録し、手順書に重ねて載せない。
-- 選定理由・技術的説明・コマンドと環境変数の一覧は `docs/reference/setup.md`、実装の仕様は `docs/SPEC.md` に置く。手順書の冒頭から検証記録と参照情報へリンクする。
-- 変更後の確認は手順書の「変更後に確認する」の物理 GNOME / ディスプレイ無し / VM ライフサイクルを使う。SPEC 9 章は期待結果の仕様であり、過去の実測記録とは分ける。
-- 検証記録の既存本文は実施時点の記録として保持する。新しい結果は対象版と環境を明記して追加する。
-
-手順の形:
-
-- `## 実施手順` の下を頻度付きのシナリオ見出し (`###`) に分ける。番号はシナリオ・節ごとに 1 から数え、リストのマーカーはすべて `1.` にする。
-- 各手順は 1 行の説明 (「〜する。」) → bash のコードブロック → 確認・分岐・注意の箇条書きの順にする。背景説明・実測の折り畳みや補足・付録は手順書に置かない。
-- 必須の変数は 1 変数 1 ブロック、任意の変数は 1 ブロックにまとめて読み戻す。導入の手順 1 の最後の `cd` を除き、貼り直す変数ブロックに操作を混ぜない。`${VAR:?…}` で空を止め、bash ブロックに `<...>` を置かない。
-- 条件付きの操作は説明に「〜ときだけ、」と書く。判定側には飛ばす手順を示す。止める手順の最後に「**次の手順は、〜してから貼る**」を置く。
-- 任意の節は実施手順の一覧から案内し、元に戻す操作はロールバックへまとめる。ホストの sudo がパスワードを聞かない前提を実施手順冒頭に明記する。
-- 上から順に貼るだけで通る形にし、clone も手順に含める。画面の有無はブロックで判定する。繰り返すシナリオは導入の手順 1 の変数を貼り直せば先頭から実行できるようにする。
-- 箇条書きは 1 項目に 1 つの事実、末尾の「。」は付けない。アラートは最上位のみで 1 文書 5 個まで、取り戻せない削除は節のリードの `[!CAUTION]` と手順の説明で示す。`[!TIP]` は使わない。
-- 手順は「導入の手順 N」「VM 作成の手順 N」「VM 利用の手順 N」「再ログインの手順 N」のように呼ぶ。同じ節では「この節の手順 N」。手順変更時は README・SPEC・参照情報の番号とリンクも追従する。過去の検証本文は変更しない。
-- `kvm.sh` の実行時メッセージを引用する箇所は原文のまま揃える。説明が SPEC にある事項は節番号で参照する。括弧は半角の `(…)` の前に空白を置く。
+ドキュメントの置き場所は、下の「文書の置き場所」。手順の書き方は setup-notes の `docs/dev/writing-rules.md` に従う。
 
 1. **ホスト側 (`kvm.sh`)** — `sudo podman` を呼ぶだけ。ホストのセッション環境
    (`XDG_RUNTIME_DIR` / `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY`) を読んで `podman run` の
@@ -138,9 +115,17 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 - **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語** (コミット f5dd92c で統一済み)。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
-- 挙動を変えたら、setup-notes の正本の手順・このリポジトリの案内 (`docs/setup.md`)・参照情報 (`docs/reference/setup.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。検証記録 (`docs/verification/setup.md`) の既存本文は保持し、新しい検証結果を追記する。
+- 挙動を変えたら、setup-notes の正本の手順・README の「導入」の表・参照情報 (`docs/reference/setup.md`)・変更後の確認 (`docs/dev/check.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。検証記録 (`docs/verification/setup.md`) の既存本文は保持し、新しい検証結果を追記する。
 - 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
-  `docs/reference/setup.md`「環境変数」の表 (と `README.md` 記法の一覧行) の 3 箇所に反映する。
+  `docs/reference/setup.md`「環境変数」の表の 3 箇所に反映する。
+
+## 文書の置き場所
+
+- 導入・利用・更新の手順は正本に置き、README の「導入」の表から正本の項へ直接リンクする (手順書の先頭やカテゴリの見出しへはリンクしない)。執筆規則は setup-notes の `docs/dev/writing-rules.md`
+- `docs/extra/setup.md` はロールバックと注意点、`docs/reference/setup.md` は正本の各手順の背景と選定理由、`docs/verification/setup.md` は検証記録 (環境・日付・対象コミット・実出力・未確認事項)、`docs/SPEC.md` は実装の仕様、`docs/dev/check.md` は変更後の確認の手順
+- 参考資料の見出しは `### <項> / 手順 N: 補足: <題>` にし、手順番号は正本の項の番号にする。正本の手順番号が変わったら付け替える
+- 案内だけになった文書・節は消し、旧パスと移動先を setup-notes の集約対応表に足す。消すときは参照元のリンクを付け替える (検証記録は、削除前の固定コミットの URL にする)
+- 検証記録の既存の本文・手順番号・出力は変えない。新しい対象版・環境・範囲は追記する
 
 ## 共同作業の規則
 
