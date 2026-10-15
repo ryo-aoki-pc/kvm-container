@@ -32,7 +32,7 @@ KVM_HOST=headless ./kvm.sh up      # 画面があっても GUI コンテナを�
 KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネットワーク "bridged" として登録
 ```
 
-検証は自動化されていない。変更後は `docs/dev/check.md` の手順 (物理 AlmaLinux 10 GNOME / ディスプレイ無し / VM のライフサイクル) を
+検証は自動化されていない。変更後は `docs/dev/check.md` の手順 (静的検査 / 物理 AlmaLinux 10 GNOME / ディスプレイ無し / VM のライフサイクル) を
 手で流す (期待結果は `docs/SPEC.md` 9 章)。利用者の確認は正本の「kvm-container を導入する」の最終手順。
 特に `sudo podman exec kvm systemctl is-system-running` と `sudo podman exec kvm-gui systemctl is-system-running` が
 `running` (degraded ではない) であることは、Containerfile の unit マスク群が効いているかの実質的な回帰テストになっている。
@@ -40,7 +40,7 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 シェルスクリプトを触ったら最低限 `bash -n` と `shellcheck` を
 `kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf`
-にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/SPEC.md` 9.1 節)。
+にかける (指摘ゼロを保つ。ホストに shellcheck が無ければ `gui` イメージの使い捨てコンテナで実行できる。`docs/dev/check.md` の「静的検査」)。
 
 ## 構造
 

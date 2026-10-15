@@ -988,19 +988,11 @@ stateDiagram-v2
 
 ## 9. 検証手順
 
-自動テストは無い。変更後は静的検査と、docs/dev/check.md (物理 AlmaLinux 10 + GNOME / ディスプレイ無し / VM のライフサイクル) の手順を手で流す。本章はその期待結果と検証している項目の表。
+自動テストは無い。変更後は docs/dev/check.md (静的検査 / 物理 AlmaLinux 10 + GNOME / ディスプレイ無し / VM のライフサイクル) の手順を手で流す。本章はその期待結果と検証している項目の表。
 
 ### 9.1 静的検査
 
-```bash
-files="kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf"
-bash -n $files
-shellcheck $files          # 指摘ゼロを保つ (-S style でもゼロ)
-# shellcheck がホストに無ければ gui イメージの使い捨てコンテナで実行できる
-# (ShellCheck は EPEL にしかないので、この使い捨てコンテナの中でだけ epel-release を入れる):
-sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
-  sh -c 'microdnf -y install epel-release >/dev/null && microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
-```
+コマンドは [docs/dev/check.md の「静的検査」](dev/check.md#静的検査)。対象の 4 ファイルで `bash -n` と `shellcheck` (`-S style` でも) の指摘ゼロを保つ。
 
 ### 9.2 物理 AlmaLinux 10 + GNOME
 

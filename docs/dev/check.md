@@ -1,19 +1,80 @@
 # 変更後の確認
 
-`kvm.sh`・コンテナの定義を変えたら、変更内容に合うシナリオを、setup-notes の[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 の `REPO` (VM を開くなら[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)の手順 1 の `VM_NAME` も) を設定した一般ユーザーのシェルで行う。期待結果と静的検査は [SPEC.md 9 章](../SPEC.md#9-検証手順)。
+変更内容に合う節を、一般ユーザーのシェルで行う。シェルスクリプトを変えたら「静的検査」も行う。期待結果は [SPEC.md 9 章](../SPEC.md#9-検証手順)。
 
 - ホストの `sudo` がパスワードを求めず、処理が止まらないことを前提にする
 - GUI の検査は GNOME にログインした一般ユーザーの端末で行う。`sudo -i` や SSH のシェルでは行わない
 - 対話画面を閉じ、待機や確認が終わってプロンプトへ戻ってから次のブロックを貼る
 
+## 静的検査
+
+シェルスクリプト (`kvm.sh`・`container/gui/gui`・`container/common/gui-user-setup`・`container/kvm/libvirt-conf`)を変えたら行う。
+
+1. 変数を設定する (既定のままでよい)。
+
+   ```bash
+   REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
+   printf '\n\033[7m 確認 \033[0m\n'
+   for v in REPO; do
+     printf '%-10s = %s\n' "$v" "${!v}"
+   done
+   [ ! -d "${REPO}" ] || cd "${REPO}"
+   ```
+
+   - `REPO` は、[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 と同じ値を入れる
+   - 値を読み戻して確かめる
+   - 最後の行でリポジトリ直下に移る
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、この節の手順 1 を貼り直してから先へ進む
+
+1. シェルスクリプトの構文と shellcheck の指摘を確かめる。
+
+   ```bash
+   files="kvm.sh container/gui/gui container/common/gui-user-setup container/kvm/libvirt-conf"
+   printf '\n\033[7m 確認 \033[0m\n'
+   bash -n $files
+   shellcheck $files
+   ```
+
+   - 指摘が 0 件ならよい (`-S style` でも 0 件を保つ)
+   - `shellcheck: command not found` と出たら、この節の手順 3 で確かめる
+
+1. shellcheck がホストに無いときだけ、`gui` イメージの使い捨てコンテナで実行する。
+
+   ```bash
+   printf '\n\033[7m 確認 \033[0m\n'
+   sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kvm-container/gui \
+     sh -c 'microdnf -y install epel-release >/dev/null && microdnf -y install ShellCheck >/dev/null && cd /src && shellcheck '"$files"
+   ```
+
+   - 新しいシェルでは、この節の手順 1 と手順 2 の `files=` の行を貼ってから実行する
+   - 指摘が 0 件ならよい (`-S style` でも 0 件を保つ)
+
 ## 物理 AlmaLinux 10 + GNOME で確認する
 
 先に[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)で VM を作り、GNOME にログインした端末で貼る。
 
+1. 変数を設定する (既定のままでよい)。
+
+   ```bash
+   REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
+   VM_NAME=alma10         # 画面を開く VM の名前。<VM_NAME>
+   printf '\n\033[7m 確認 \033[0m\n'
+   for v in REPO VM_NAME; do
+     printf '%-10s = %s\n' "$v" "${!v}"
+   done
+   [ ! -d "${REPO}" ] || cd "${REPO}"
+   ```
+
+   - `REPO` は、[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 と同じ値を入れる
+   - `VM_NAME` は、[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)の手順 1 と同じ値 (作った VM の名前) を入れる
+   - 値を読み戻して確かめる
+   - 最後の行でリポジトリ直下に移る
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、この節の手順 1 を貼り直してから先へ進む
+
 1. コンテナを起動し、権限・接続・SELinux を確かめる。
 
    ```bash
-   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
    getenforce                                            # Enforcing のままで可
    env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
    ./kvm.sh up                                            # >> ready. VMs: ... が出ること
@@ -32,7 +93,7 @@
 1. VM の画面を開いて表示を確かめる。
 
    ```bash
-   ./kvm.sh viewer "${VM_NAME:?「kvm-container で VM を作る」の手順 1 の VM_NAME を設定してから貼る}"
+   ./kvm.sh viewer "${VM_NAME:?この節の手順 1 の VM_NAME が空のまま。この節の手順 1 を貼り直す}"
    ```
 
    - VM のコンソールが見えることを確かめる
@@ -47,7 +108,7 @@
    - VM を選ぶダイアログが出ることを確かめる
    - **次の手順は、ダイアログを閉じてから貼る**
 
-1. GNOME からログアウト・再ログインし、変数を貼り直して起動する。
+1. GNOME からログアウト・再ログインし、新しい端末でこの節の手順 1 を貼り直してから起動する。
 
    ```bash
    ./kvm.sh up                                            # kvm-gui だけが作り直され、./kvm.sh virsh list の VM が動いたままであること
@@ -67,10 +128,26 @@
 
 グラフィカルセッション外のシェル (SSH など) で貼る。
 
+1. 変数を設定する (既定のままでよい)。
+
+   ```bash
+   REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
+   printf '\n\033[7m 確認 \033[0m\n'
+   for v in REPO; do
+     printf '%-10s = %s\n' "$v" "${!v}"
+   done
+   [ ! -d "${REPO}" ] || cd "${REPO}"
+   ```
+
+   - `REPO` は、[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 と同じ値を入れる
+   - 値を読み戻して確かめる
+   - 最後の行でリポジトリ直下に移る
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、この節の手順 1 を貼り直してから先へ進む
+
 1. 画面を使わずにコンテナを起動する。
 
    ```bash
-   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
    KVM_HOST=headless ./kvm.sh up      # >> ready. のあとに >> no display found: GUI disabled ... が出ること
    ```
 
@@ -120,10 +197,26 @@
 - 待ち時間のあるブロックは 1 行ずつ結果を見ながら貼る。`virt-install` の後は `domstate` が `shut off` になるまで数分待ってから `start` 以降を貼る
 - シリアルログ `/var/log/libvirt/qemu/lctest-serial.log` は `kvm` コンテナ内にある。`down` で消えるため、その前に確認する
 
+1. 変数を設定する (既定のままでよい)。
+
+   ```bash
+   REPO=~/kvm-container   # clone 先。ユーザーのホームディレクトリ配下にする。<REPO>
+   printf '\n\033[7m 確認 \033[0m\n'
+   for v in REPO; do
+     printf '%-10s = %s\n' "$v" "${!v}"
+   done
+   [ ! -d "${REPO}" ] || cd "${REPO}"
+   ```
+
+   - `REPO` は、[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 と同じ値を入れる
+   - 値を読み戻して確かめる
+   - 最後の行でリポジトリ直下に移る
+   - **新しいシェルを開いたら** (SSH を張り直したあとも)、この節の手順 1 を貼り直してから先へ進む
+
 1. キックスタート用 ISO を作り、VM のインストールと OS 起動を確かめる。
 
    ```bash
-   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?この節の手順 1 の REPO が空のまま。この節の手順 1 を貼り直す}"
    ./kvm.sh up
    sudo podman exec kvm mkdir -p /tmp/ksdir && sudo podman cp ks.cfg kvm:/tmp/ksdir/ks.cfg
    sudo podman exec kvm xorriso -as mkisofs -V OEMDRV -o /var/lib/libvirt/images/lctest-ks.iso /tmp/ksdir
@@ -148,7 +241,7 @@
    ```
 
    - ログインプロンプトが見えることを確かめる
-   - **次の手順は、virt-viewer を開いたまま、別の端末でリポジトリ直下に移って貼る**
+   - **次の手順は、virt-viewer を開いたまま、別の端末でこの節の手順 1 を貼ってから貼る**
 
 1. 画面を開いたまま、別の端末で再起動・シャットダウンを行う。
 
