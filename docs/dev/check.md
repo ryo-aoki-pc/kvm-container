@@ -1,48 +1,14 @@
-# qemu-kvm コンテナ 導入と VM の作成・操作手順 (AlmaLinux 10 / podman、物理 GNOME / ディスプレイ無し)
+# 変更後の確認
 
-Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に集約した。kvm-container の項は [仮想マシンのセットアップ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container) にある（2026-10-15 に AlmaLinux 10 の手順から分けた）。
-
-## 実施手順
-
-### 導入する (1 度だけ)
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)
-
-### VM を作る (VM ごとに 1 度)
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)
-
-### VM を使う (繰り返し)
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を使う)
-
-### 再ログインしたとき (繰り返し)
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-gui-を再ログイン後に使う)
-
-## VM をホストのブリッジにつなぐ (任意)
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ)
-
-## VM を削除する
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を削除する)
-
-## 更新
-
-[AlmaLinux 10](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を更新する)
-
-## 変更後に確認する
-
-変更内容に合うシナリオを、[導入の手順 1](#導入する-1-度だけ) の変数を設定した一般ユーザーのシェルで行う。期待結果は [SPEC.md 9 章](SPEC.md#9-検証手順)。
+`kvm.sh`・コンテナの定義を変えたら、変更内容に合うシナリオを、setup-notes の[kvm-container を導入する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 1 の `REPO` (VM を開くなら[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)の手順 1 の `VM_NAME` も) を設定した一般ユーザーのシェルで行う。期待結果と静的検査は [SPEC.md 9 章](../SPEC.md#9-検証手順)。
 
 - ホストの `sudo` がパスワードを求めず、処理が止まらないことを前提にする
 - GUI の検査は GNOME にログインした一般ユーザーの端末で行う。`sudo -i` や SSH のシェルでは行わない
 - 対話画面を閉じ、待機や確認が終わってプロンプトへ戻ってから次のブロックを貼る
 
-### 物理 AlmaLinux 10 + GNOME で確認する
+## 物理 AlmaLinux 10 + GNOME で確認する
 
-先に [VM 作成の手順 3](#vm-を作る-vm-ごとに-1-度) で VM を作り、GNOME にログインした端末で貼る。
+先に[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)で VM を作り、GNOME にログインした端末で貼る。
 
 1. コンテナを起動し、権限・接続・SELinux を確かめる。
 
@@ -66,7 +32,7 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に�
 1. VM の画面を開いて表示を確かめる。
 
    ```bash
-   ./kvm.sh viewer "${VM_NAME:?導入の手順 1 の VM_NAME を設定してから貼る}"
+   ./kvm.sh viewer "${VM_NAME:?VM を作るの手順 1 の VM_NAME を設定してから貼る}"
    ```
 
    - VM のコンソールが見えることを確かめる
@@ -97,7 +63,7 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に�
 
    - `virbr0` と `/run/kvm-container` が残っていないことを確かめる
 
-### ディスプレイの無いホストで確認する
+## ディスプレイの無いホストで確認する
 
 グラフィカルセッション外のシェル (SSH など) で貼る。
 
@@ -145,11 +111,11 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に�
    - `KVM_HOST` 無しでも画面無しとして起動する
    - 最後の `down` 後に `virbr0` と `/run/kvm-container` が残らない
 
-### VM のライフサイクルを確認する
+## VM のライフサイクルを確認する
 
 物理 AlmaLinux 10 + GNOME のホストで、使い捨て VM `lctest` を作成して削除する。
 
-- boot ISO `AlmaLinux-10.2-x86_64-boot.iso` は、先に [VM 作成の手順 1](#vm-を作る-vm-ごとに-1-度) で `data/var-libvirt/images/` に置く
+- boot ISO `AlmaLinux-10.2-x86_64-boot.iso` は、先に[kvm-container で VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)の手順 1・2 で `data/var-libvirt/images/` に置く
 - `ks.cfg` は `data/` の外のリポジトリ直下に用意し、`poweroff` と `%packages` の `qemu-guest-agent` を含める。終了後は誤ってコミットしないよう消す
 - 待ち時間のあるブロックは 1 行ずつ結果を見ながら貼る。`virt-install` の後は `domstate` が `shut off` になるまで数分待ってから `start` 以降を貼る
 - シリアルログ `/var/log/libvirt/qemu/lctest-serial.log` は `kvm` コンテナ内にある。`down` で消えるため、その前に確認する
@@ -210,7 +176,3 @@ Windows 11・AlmaLinux 10 の導入・利用・更新手順は setup-notes に�
 
    - 各行の期待結果を確認してから次の行へ進む
    - 最後に定義とディスクが消え、ISO が残ることを確かめる
-
-## ロールバック
-
-[元に戻す手順](extra/setup.md#ロールバック)

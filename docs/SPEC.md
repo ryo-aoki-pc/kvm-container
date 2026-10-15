@@ -7,9 +7,8 @@
 | --- | --- |
 | 対象コミット | main (PR 36「実施手順をシナリオに分け、アクティビティからの起動などを削除する」まで。付録 B) |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
-| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と docs/setup.md の手順書、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | README.md = 手順書の節の一覧と記法、docs/setup.md = 導入と VM の作成・操作の手順書 (実施手順は 1 度だけ行うものと繰り返すものをシナリオに分け、任意の節にブリッジ、変更後の確認手順は付録)、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
-| 現在の手順案内 | Windows・AlmaLinux の操作は setup-notes の正本に置く（kvm-container の項は virtual-machines.md）。README.md から正本と集約対応表へ案内し、docs/setup.md は案内と開発者検査、本書は仕様を保持する。案内だけになった旧文書は削除する |
+| 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と手順書 (当時は docs/setup.md。今は setup-notes の virtual-machines.md の「kvm-container」)、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
+| 他文書との分担 | setup-notes の virtual-machines.md の「kvm-container」= 導入と VM の作成・操作の手順書 (1 度だけ行うものと繰り返すものを項に分ける)、README.md = 概要と手順書の項の一覧、docs/reference/setup.md = 手順の背景、docs/extra/setup.md = ロールバックと注意点、docs/dev/check.md = 変更後の確認の手順、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
@@ -71,12 +70,12 @@ flowchart LR
 
 | 項目 | 理由 (出典) |
 | --- | --- |
-| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/setup.md「選択した方針」) |
+| SPICE | RHEL 10 系の qemu-kvm に SPICE が無い。VM のグラフィックスは VNC (docs/reference/setup.md「選択した方針」) |
 | Web コンソール (cockpit) とブラウザ (firefox) | 廃止した。VM の操作は CLI、画面は virt-viewer (PR 25) |
 | ホストのネットワーク設定の変更 | ブリッジは利用者がホスト側で作る。`kvm.sh` はホストの NIC やブリッジを作らない |
 | アプリ一覧 (Activities) からの起動 | 廃止した。VM の画面は端末から `kvm.sh viewer` で開く (PR 36) |
 | 音声 | ホストの PulseAudio / PipeWire のソケットは `kvm-gui` に渡さない。VNC の画面を出す virt-viewer では使わない (PR 36) |
-| 自動テスト | テストスイートは無い。検証は docs/setup.md の「変更後に確認する」の手順を手で流す (9 章) |
+| 自動テスト | テストスイートは無い。検証は docs/dev/check.md の手順を手で流す (9 章) |
 
 ### 1.3 用語
 
@@ -139,7 +138,7 @@ flowchart TD
 
 | 確認 | 条件 | 結果 |
 | --- | --- | --- |
-| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see docs/setup.md)` で exit 1 |
+| ブリッジの存在 | `KVM_BRIDGE` が設定され、`/sys/class/net/$KVM_BRIDGE/bridge` が無い | `!! KVM_BRIDGE=... is not a bridge on this host. Create it first (see the kvm-container bridge steps in setup-notes docs/virtual-machines.md)` で exit 1 |
 | `virbr0` の残存 | `/sys/class/net/virbr0` がある | 警告のみ (`!! virbr0 already exists on the host ...` と `sudo ip link del virbr0` の案内)。起動は続くが `default` ネットワークの起動は失敗する |
 
 ## 3. システム構成
@@ -989,7 +988,7 @@ stateDiagram-v2
 
 ## 9. 検証手順
 
-自動テストは無い。変更後は静的検査と、docs/setup.md の「変更後に確認する」 (物理 AlmaLinux 10 + GNOME / ディスプレイ無し / VM のライフサイクル) の手順を手で流す。本章はその期待結果と検証している項目の表。
+自動テストは無い。変更後は静的検査と、docs/dev/check.md (物理 AlmaLinux 10 + GNOME / ディスプレイ無し / VM のライフサイクル) の手順を手で流す。本章はその期待結果と検証している項目の表。
 
 ### 9.1 静的検査
 
@@ -1053,7 +1052,7 @@ sudo podman run --rm --security-opt label=disable -v "$PWD:/src:ro" localhost/kv
 
 ### 9.5 VM のライフサイクル
 
-OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは docs/setup.md「付録: VM のライフサイクルの確認手順」)。
+OS の入った使い捨ての VM `lctest` で、作成から削除までを確認する (コマンドは docs/dev/check.md「VM のライフサイクルを確認する」)。
 キックスタート (`poweroff`、`%packages` に `qemu-guest-agent`) を `OEMDRV` ラベルの ISO にして `--location <boot ISO>` でインストールすると、
 インストール後に `shut off` になり、永続定義はディスク起動に切り替わる (kernel/initrd の直接起動と boot ISO は外れる)。
 起動の確認は `virsh qemu-agent-command lctest '{"execute":"guest-ping"}'`、再起動の確認はシリアルログ
@@ -1075,7 +1074,7 @@ OS の入った使い捨ての VM `lctest` で、作成から削除までを確�
 | `virsh autostart` → `down kvm` → `up kvm` | `running (booted)`。`data/etc-libvirt/qemu/autostart/` に symlink | 自動起動 |
 | autostart 無しの VM を動かしたまま `down kvm` → `up kvm` | 定義が残り `shut off` のまま | `ON_BOOT=ignore` |
 | UEFI の VM に `virsh undefine` (`--nvram` 無し) | `Cannot undefine domain with NVRAM/varstore` で失敗し、定義も残る | 8 章 |
-| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (docs/setup.md「VM を削除する」) |
+| `virsh undefine <VM> --nvram --storage vda` | 定義・`qemu/nvram/<VM>_VARS.fd`・ディスクだけが消え、ISO は残る | 削除手順 (setup-notes の「kvm-container の VM を削除する」) |
 | CD-ROM に ISO を入れたまま `virsh undefine --remove-all-storage` | ISO も消える (使い捨ての ISO で確認する) | 8 章の注意が今も正しいか |
 
 ## 付録 A. ファイル一覧とコンテナ内配置
