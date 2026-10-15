@@ -13,7 +13,7 @@
 1. コンテナを起動し、権限・接続・SELinux を確かめる。
 
    ```bash
-   cd "${REPO:?導入の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
    getenforce                                            # Enforcing のままで可
    env | grep -E 'DISPLAY|WAYLAND|XDG_RUNTIME|XAUTH'      # GNOME 端末で値が入っていること
    ./kvm.sh up                                            # >> ready. VMs: ... が出ること
@@ -32,7 +32,7 @@
 1. VM の画面を開いて表示を確かめる。
 
    ```bash
-   ./kvm.sh viewer "${VM_NAME:?VM を作るの手順 1 の VM_NAME を設定してから貼る}"
+   ./kvm.sh viewer "${VM_NAME:?「kvm-container で VM を作る」の手順 1 の VM_NAME を設定してから貼る}"
    ```
 
    - VM のコンソールが見えることを確かめる
@@ -70,7 +70,7 @@
 1. 画面を使わずにコンテナを起動する。
 
    ```bash
-   cd "${REPO:?導入の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
    KVM_HOST=headless ./kvm.sh up      # >> ready. のあとに >> no display found: GUI disabled ... が出ること
    ```
 
@@ -123,7 +123,7 @@
 1. キックスタート用 ISO を作り、VM のインストールと OS 起動を確かめる。
 
    ```bash
-   cd "${REPO:?導入の手順 1 の REPO が空のまま。値を入れて貼り直す}"
+   cd "${REPO:?「kvm-container を導入する」の手順 1 の REPO が空のまま。値を入れて貼り直す}"
    ./kvm.sh up
    sudo podman exec kvm mkdir -p /tmp/ksdir && sudo podman cp ks.cfg kvm:/tmp/ksdir/ks.cfg
    sudo podman exec kvm xorriso -as mkisofs -V OEMDRV -o /var/lib/libvirt/images/lctest-ks.iso /tmp/ksdir

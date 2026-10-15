@@ -6,7 +6,7 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 
 - 対象: AlmaLinux 10 のホストの一般ユーザー (画面を使うなら GNOME の端末、画面の無いホストは SSH のシェル)。Windows 11 の手順は無い
 - 前提: パスワードを聞かない `sudo`、CPU の仮想化支援 (VM の中ならネストした仮想化)。VM を作るのは x86_64 のホストだけ
-- 手順は setup-notes の[仮想マシンのセットアップの「kvm-container」](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container)にある。ホストに入れるのは podman と git だけ
+- 手順は setup-notes の仮想マシンのセットアップの「[kvm-container](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container)」にある。ホストに入れるのは podman と git だけ
 
 | 用途 | AlmaLinux 10 |
 | --- | --- |
@@ -17,7 +17,7 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 | LAN に直接つなぐ | [kvm-container の VM をホストのブリッジにつなぐ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ) |
 | VM を消す | [kvm-container の VM を削除する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を削除する) |
 | 更新 | [kvm-container を更新する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を更新する) |
-| 戻す | [kvm-container のロールバック](docs/extra/setup.md#ロールバック) |
+| 戻す | [ロールバック](docs/extra/setup.md#ロールバック) |
 
 ## 文書
 
