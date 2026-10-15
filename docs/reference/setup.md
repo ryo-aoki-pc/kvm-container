@@ -192,8 +192,8 @@
 | `./kvm.sh viewer [VM名]` | VM の画面を virt-viewer で表示 (VM 名を省くと一覧から選ぶダイアログ) | [VM を作る](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-で-vm-を作る)の手順 5 / [VM を使う](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を使う)の手順 4 |
 | `./kvm.sh shell [kvm\|gui]` | コンテナ内 root シェル (既定 `kvm`) | [導入](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 9 |
 | `./kvm.sh logs [kvm\|gui]` | libvirt の journal と GUI アプリのログ | [導入](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を導入する)の手順 9 |
-| `./kvm.sh down [kvm\|gui]` | コンテナ停止・削除 (VM のディスク / 定義はホストの `data/` に残る)。引数なしで両方 | [VM を使う](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を使う)の手順 7 / [ロールバック](../extra/setup.md#ロールバック)の手順 5 |
-| `./kvm.sh clean` | コンテナと `data/` のデータをすべて削除 (確認あり) | [ロールバック](../extra/setup.md#ロールバック)の手順 6 |
+| `./kvm.sh down [kvm\|gui]` | コンテナ停止・削除 (VM のディスク / 定義はホストの `data/` に残る)。引数なしで両方 | [VM を使う](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を使う)の手順 7 / [ロールバック](../extra/setup.md#ロールバック)の手順 6 |
+| `./kvm.sh clean` | コンテナと `data/` のデータをすべて削除 (確認あり) | [ロールバック](../extra/setup.md#ロールバック)の手順 7 |
 
 - `up` は足りないイメージを自動でビルドする。`viewer` は先に `up` を実行するので、コンテナが止まっていても、再ログインで表示先が変わっていても、そのまま使える
 - `kvm.sh` 自身が読む環境変数 (`KVM_HOST` / `KVM_BRIDGE` / `TZ`) は、`KVM_BRIDGE=br0 ./kvm.sh up` のようにコマンドの前に付ける。一覧は[環境変数](#環境変数)
