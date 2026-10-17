@@ -24,5 +24,5 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 - [仕様](docs/SPEC.md): CLI・環境変数・マウント・起動と停止の順序・不変条件 (図付き)
 - [参考資料](docs/reference/setup.md): 正本の各手順の背景、サブコマンドの一覧、選択した方針
 - [注意点](docs/extra/setup.md#注意点)
-- [検証記録](docs/verification/setup.md)
+- [検証記録](https://github.com/ryo-aoki-pc/setup-notes-verification/blob/main/repos/kvm-container/docs/verification/setup.md)
 - 変更するとき: [変更後の確認](docs/dev/check.md)と [AGENTS.md](AGENTS.md)

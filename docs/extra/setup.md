@@ -1,6 +1,6 @@
 # kvm-container のロールバックと注意点
 
-setup-notes の[仮想マシンのセットアップの「kvm-container」](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container)で入れたものを戻す。背景は[参考資料](../reference/setup.md)、検証は[検証記録](../verification/setup.md)。「この節の手順 N」はこの文書の手順を指す。
+setup-notes の[仮想マシンのセットアップの「kvm-container」](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container)で入れたものを戻す。背景は[参考資料](../reference/setup.md)、検証は[検証記録](https://github.com/ryo-aoki-pc/setup-notes-verification/blob/main/repos/kvm-container/docs/verification/setup.md)。「この節の手順 N」はこの文書の手順を指す。
 
 ## ロールバック
 

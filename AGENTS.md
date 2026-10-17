@@ -115,14 +115,15 @@ KVM_BRIDGE=br0 ./kvm.sh up         # ホストのブリッジを libvirt ネッ�
 
 - **コード内のコメントと実行時メッセージは英語、README・docs/*.md とコミットメッセージは日本語**。
 - `kvm.sh` の実行時出力は `>> ` が進捗、`!! ` が警告/エラー (stderr)。
-- 挙動を変えたら、setup-notes の正本の手順・README の「導入」の表・参照情報 (`docs/reference/setup.md`)・変更後の確認 (`docs/dev/check.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。新しい検証結果は検証記録 (`docs/verification/setup.md`) に追記する。
+- 挙動を変えたら、setup-notes の正本の手順・README の「導入」の表・参照情報 (`docs/reference/setup.md`)・変更後の確認 (`docs/dev/check.md`)・`kvm.sh` 冒頭のヘッダコメント (`usage` が 2 行目から最初の非コメント行まで表示する)・`docs/SPEC.md` の該当節 (表・図) を同期する。新しい検証結果は非公開側の検証記録の `setup.md` に追記する。
 - 新しい環境変数は `kvm.sh` 冒頭の既定値定義・ヘッダコメント・
   `docs/reference/setup.md`「環境変数」の表の 3 箇所に反映する。
 
 ## 文書の置き場所
 
 - 導入・利用・更新の手順は正本に置き、README の「導入」の表から正本の項へ直接リンクする (手順書の先頭やカテゴリの見出しへはリンクしない)。執筆規則は setup-notes の `docs/dev/writing-rules.md`
-- `docs/extra/setup.md` はロールバックと注意点、`docs/reference/setup.md` は正本の各手順の背景と選定理由、`docs/verification/setup.md` は検証記録 (環境・日付・対象コミット・実出力・未確認事項)、`docs/SPEC.md` は実装の仕様、`docs/dev/check.md` は変更後の確認の手順
+- `docs/extra/setup.md` はロールバックと注意点、`docs/reference/setup.md` は正本の各手順の背景と選定理由。検証記録 (環境・日付・対象コミット・実出力・未確認事項) は、非公開の `ryo-aoki-pc/setup-notes-verification` の `repos/kvm-container/docs/verification/setup.md` に置く。`docs/SPEC.md` は実装の仕様、`docs/dev/check.md` は変更後の確認の手順
+- 検証記録を書く・直すときは、`setup-notes-verification` を clone し、そちらへ Pull Request を作る
 - 参考資料の見出しは `### <項> / 手順 N: 補足: <題>` にし、手順番号は正本の項の番号にする。正本の手順番号が変わったら付け替える
 - 文書を移す・分ける・まとめるときは、移した経緯と、旧ファイル名・旧見出しとの対応を文書に書かない (経緯は git の履歴と Pull Request の本文に残す)。リンクを今の場所へ直す。中身が新しい場所への案内だけになったファイルは消す
 - 残す検証記録の実施日・対象版・環境・出力・成功と失敗・未実施の範囲・記録したときの手順番号は書き換えない。再検証せずに検証範囲を広げない。記録の手順番号が今の手順と違い、本文を読むのに要るときだけ「記録の手順 | 今の手順」の表で結ぶ
