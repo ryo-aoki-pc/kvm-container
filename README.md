@@ -17,7 +17,6 @@ qemu-kvm / libvirt / virt-viewer を 2 つの systemd コンテナ (`kvm` = サ�
 | LAN に直接つなぐ | [kvm-container の VM をホストのブリッジにつなぐ](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-をホストのブリッジにつなぐ) |
 | VM を消す | [kvm-container の VM を削除する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-の-vm-を削除する) |
 | 更新 | [kvm-container を更新する](https://github.com/ryo-aoki-pc/setup-notes/blob/main/docs/virtual-machines.md#kvm-container-を更新する) |
-| 戻す | [ロールバック](docs/extra/setup.md#ロールバック) |
 
 ## 文書
 
