@@ -8,7 +8,7 @@
 | 対象コミット | main |
 | 対象読者 | 利用者 (CLI・環境変数・データの扱いを知りたい人) と保守者 (起動/停止の順序、各 unit の役割、変えてはいけない構成を知りたい人) |
 | 出典 | `kvm.sh` `Containerfile` `container/{common,kvm,gui}/*` `.gitignore`、README.md と手順書 (setup-notes の virtual-machines.md の「kvm-container」)、AGENTS.md、git の変更履歴。本書はこれらに書かれている事実のみを記述し、実装に無い振る舞いは書かない |
-| 他文書との分担 | setup-notes の virtual-machines.md の「kvm-container」= 導入と VM の作成・操作の手順書 (1 度だけ行うものと繰り返すものを項に分ける)、README.md = 概要と手順書の項の一覧、docs/reference/setup.md = 手順の背景、docs/extra/setup.md = ロールバックと注意点、docs/dev/check.md = 変更後の確認の手順、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
+| 他文書との分担 | setup-notes の virtual-machines.md の「kvm-container」= 導入と VM の作成・操作の手順書 (1 度だけ行うものと繰り返すものを項に分ける)、README.md = 概要と手順書の項の一覧、docs/reference/setup.md = 手順の背景、docs/extra/setup.md = 注意点、docs/dev/check.md = 変更後の確認の手順、AGENTS.md = 変更時の注意点、本書 = 振る舞いの定義。手順は手順書を参照し、本書では繰り返さない |
 | 記法 | 実行時メッセージとコード内コメントは英語なので原文のまま引用する。`>> ` は進捗、`!! ` は警告/エラー (stderr)。図中の `UID` はホストユーザーの uid、`USER` はホストユーザー名を表す |
 
 目次
